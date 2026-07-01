@@ -5,19 +5,26 @@ the dump at run time. The same ladder (M1 -> M2a/M2b -> M3 -> score) runs on all
 of them; only the appid, the event date and the neutral change clause differ, so
 nothing is tuned per case to a known answer.
 
-Two are wired:
+The set is chosen to span *directions and mechanisms*, because a method that only
+predicts backlash could pass a backlash-only set by always leaning negative:
 
-* PAYDAY2 — the microtransaction betrayal of Oct 2015. Overkill promised "no
-  microtransactions whatsoever", then added paid safes/drills; recommend fell
-  0.87 -> 0.31 (7d), and the *never-edited* reviews are even more negative
-  (0.16), so the swing is real, not a reversion artefact. Divisive along a
-  behavioural axis (betrayal scales with investment), contagious, not
-  region-bound — the plan's primary graph flagship.
-* HELLDIVERS2 — the mandatory-PSN announcement of May 2024. Kept as a documented
-  contrast: Sony reversed the policy days later, ~58% of the window was edited,
-  and the measured post ratio comes out *positive* (0.84), so this dump cannot
-  reproduce the live histogram's backlash. Useful as the "behavioural GT needs
-  behaviour to move, and stay moved" illustration.
+* PAYDAY2 (2015) — sharp microtransaction backlash, 0.87 -> 0.31, un-reverted.
+  Split axis: betrayal scales with investment (playtime/tenure). Primary flagship.
+* TOTALWAR3 (2023) — overpriced-DLC backlash, 0.85 -> 0.24, un-reverted. A second,
+  less-memorised backlash on a different mechanism (DLC value, not MTX). Split
+  axis: value-sensitivity of invested owners.
+* NOMANSSKY (2018) — a redemption *up*-swing after the free NEXT update. Tests
+  direction generality: personas must react to the *content* of a change, not a
+  fixed "change = bad" prior. Famous, so carries a memorisation caveat.
+* HELLDIVERS2 (2024) — contrast where this dump post-dates Sony's reversal, so the
+  measured swing washes out; kept as a ground-truth-integrity example.
+
+Why these and not CS:GO / The Alters: CS:GO F2P was a *unanimous shock* (every
+owner devalued at once) and The Alters had no behavioural move, so there was
+nothing heterogeneous for persona attributes or the homophily graph to separate —
+the simulation cannot catch a reaction that is uniform or absent. Every scored
+case here is a genuine, attribute-predictable *split* (some owners stay positive),
+which is the condition under which the method can be validated at all.
 """
 from __future__ import annotations
 
@@ -49,6 +56,7 @@ class DumpCase:
     event_cutoff: int          # unix seconds, the announcement date
     change: str                # neutral statement of the decision (no valence)
     question: str
+    note: str = ""             # the split axis / why it isn't a unanimous shock
     gt_window_days: int = 7
     n_personas: int = 20
     pool: int = 600
@@ -76,6 +84,41 @@ PAYDAY2 = DumpCase(
         "game would never have them. Would this player recommend the game after "
         "this change?"
     ),
+    note="split axis: betrayal scales with investment (playtime/tenure). Backlash, un-reverted.",
+)
+
+TOTALWAR3 = DumpCase(
+    key="totalwar3",
+    title="Total War: Warhammer III — Shadows of Change DLC (2023-08-08)",
+    appid=1142710,
+    event_cutoff=1691452800,   # 2023-08-08 00:00 UTC (DLC announcement)
+    change=(
+        "The developer has released a new paid DLC that adds fewer new units and "
+        "characters than earlier DLC did at the same price."
+    ),
+    question=(
+        "Total War: Warhammer III's developer has released a paid DLC that adds "
+        "less new content than earlier DLC at the same price. Would this player "
+        "recommend the game after this?"
+    ),
+    note="split axis: value-sensitivity of invested owners. Second backlash, different mechanism, less memorised.",
+)
+
+NOMANSSKY = DumpCase(
+    key="nomanssky",
+    title="No Man's Sky — NEXT free update (2018-07-24)",
+    appid=275850,
+    event_cutoff=1532390400,   # 2018-07-24 00:00 UTC (NEXT release)
+    change=(
+        "The developer has released a large free update ('NEXT') that adds "
+        "multiplayer and base building and overhauls the game's visuals."
+    ),
+    question=(
+        "No Man's Sky has received a major free update adding multiplayer and "
+        "overhauling the game. Would this player recommend the game after this "
+        "update?"
+    ),
+    note="redemption UP-swing; split axis: whether a lapsed/critical owner returns. Memorisation caveat (famous).",
 )
 
 HELLDIVERS2 = DumpCase(
@@ -91,9 +134,10 @@ HELLDIVERS2 = DumpCase(
         "Helldivers 2 now requires linking a PlayStation Network account to keep "
         "playing on PC. Would this player recommend the game after this change?"
     ),
+    note="CONTRAST ONLY: dump post-dates Sony's reversal (~58% edited), so the measured swing washes out.",
 )
 
-CASES = {c.key: c for c in (PAYDAY2, HELLDIVERS2)}
+CASES = {c.key: c for c in (PAYDAY2, TOTALWAR3, NOMANSSKY, HELLDIVERS2)}
 
 
 def _offline_backend(messages: list[dict], model: str) -> float:
@@ -130,7 +174,10 @@ def run_dump_smoke(case: DumpCase) -> None:
     gt_clean = float(clean["voted_up"].mean()) if len(clean) else float("nan")
 
     print(f"{case.title} | model={'OFFLINE-STUB' if offline else MODEL_ID} | n={case.n_personas}")
-    print(f"real swing: pre-event recommend {pre_ratio:.3f} (n={pre_n})  ->  "
+    if case.note:
+        print(f"  case: {case.note}")
+    direction = "UP" if gt > pre_ratio else "DOWN"
+    print(f"real swing ({direction}): pre-event recommend {pre_ratio:.3f} (n={pre_n})  ->  "
           f"post-{case.gt_window_days}d {gt:.3f} (n={gt_n})  |  ground truth = {gt:.3f}")
     print(f"  note: {100 * post['edited'].mean():.0f}% of that window was edited after "
           f"posting; never-edited post ratio = {gt_clean:.3f} (n={len(clean)})\n")
@@ -175,6 +222,13 @@ def run_dump_smoke(case: DumpCase) -> None:
     print(f"  predicted (M2a)           = {res_a.p_hat:.3f}")
     closer = abs(res_a.p_hat - gt) < abs(res_a.p_hat - pre_ratio)
     print(f"  -> M2a is {'closer to the outcome than to the prior' if closer else 'anchored on the prior'}")
+
+    # Shock-vs-split read: a near-uniform persona response that sits on the prior
+    # is the CS:GO failure mode (nothing heterogeneous for the graph to carry).
+    shock_like = res_a.spread < 0.12 and abs(res_a.p_hat - pre_ratio) < 0.08
+    print(f"  simulation reads as: "
+          f"{'SHOCK-LIKE — near-uniform personas echoing the prior (graph has little to carry)' if shock_like else 'a heterogeneous split (personas disagree — the graph can act)'} "
+          f"[M2a spread={res_a.spread:.3f}]")
 
     print("\nhomophily null-shuffle check (M3 graph):")
     print(f"  Moran's I = {null.observed:+.4f} | null mean = {null.null_mean:+.4f} | "
