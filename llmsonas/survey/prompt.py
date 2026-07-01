@@ -35,3 +35,21 @@ def naive_messages(descriptor: str, question: str, labels: dict[str, str]) -> li
     """M1 control — a generic descriptor, no behavioural grounding."""
     user = f"Consider {descriptor}.\n\n{_question_block(question, labels)}"
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
+
+
+def contagion_messages(
+    bio: str,
+    neighbour_summary: str,
+    grievance: str | None,
+    question: str,
+    labels: dict[str, str],
+) -> list[dict]:
+    """M3 LLM-in-the-loop — the persona re-answers seeing the grievance (once it has
+    reached them) and how their most-similar peers currently lean."""
+    parts = [bio]
+    if grievance:
+        parts.append(grievance)
+    parts.append(neighbour_summary)
+    parts.append(_question_block(question, labels))
+    parts.append("Weigh this player's own history against what similar players are saying.")
+    return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n\n".join(parts)}]

@@ -24,14 +24,18 @@ def _hours(minutes: int) -> int:
 
 
 def third_person_bio(r: UserRecord) -> str:
-    disposition = "recommends" if r.voted_up else "does not recommend"
+    # Frame the prior review as PAST behaviour on the *paid* game, not a present
+    # verdict. Stating "currently recommends it" leaks the pre-event answer and the
+    # model just parrots it instead of reasoning about the free-to-play change.
+    stance = "gave it a positive review" if r.voted_up else "gave it a negative review"
     owned = f"{r.num_games_owned} games" if r.num_games_owned else "an unknown number of games"
     quote = r.review.replace("\n", " ").strip()[:280]
     return (
         f"This Steam user owns {owned} and has written {r.num_reviews} review(s). "
         f"In this game they have about {_hours(r.playtime_forever)} hours "
-        f"({_hours(r.playtime_at_review)} at the time of their review) and currently "
-        f'{disposition} it. In their own words: "{quote}"'
+        f"({_hours(r.playtime_at_review)} at the time of their review). When they "
+        f"reviewed the paid version they {stance}. "
+        f'In their own words: "{quote}"'
     )
 
 
