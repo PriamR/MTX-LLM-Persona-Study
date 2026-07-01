@@ -29,13 +29,24 @@ SENTI_MINTED_PATH = Path(
 class SmokeConfig:
     """Locked inputs for the CS:GO (Q1a) smoke test."""
 
-    model: str = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
+    # NB: the plan pinned Llama-3.1-8B-Instruct-Turbo, but Together moved it to
+    # dedicated-endpoint only. Meta-Llama-3-8B-Instruct-Lite is the closest
+    # serverless 8B that still exposes option-token logprobs — fine for the
+    # integrity-only smoke test. Full-run model choice is revisited separately.
+    model: str = "meta-llama/Meta-Llama-3-8B-Instruct-Lite"
     appid: int = 730                 # CS:GO
     event_cutoff: int = 1544054400   # 2018-12-06, paid -> free-to-play
     n_personas: int = 20
+    n_users: int = 300               # live review pull the personas are drawn from
     graph_rounds: int = 3            # Friedkin-Johnsen T
     knn_k: int = 8
+    susceptibility: float = 0.5      # FJ anchoring S; lit finds LLM S>0.8, so anchor deliberately
     seed: int = 42
+
+    # STUB ground truth for the smoke test only: ~71% not-recommend after the
+    # CS:GO F2P conversion -> recommend ratio ~= 0.29. The real histogram (live /
+    # dump) is wired in for the validation run; no accuracy claim is made here.
+    gt_recommend_stub: float = 0.29
 
     # Single-token labels keep option-logprob extraction clean; mapped back after.
     answer_labels: dict[str, str] = field(

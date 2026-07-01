@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmsonas"
+version = "0.0.1"
+description = "LLM personas of a Steam player group, and a method bake-off for matching their real opinions."
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools.packages.find]
+include = ["llmsonas*"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
