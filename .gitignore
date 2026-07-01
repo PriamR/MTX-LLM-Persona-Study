@@ -1,0 +1,27 @@
+# Private planning notes — never publish
+context.md
+
+# Secrets / credentials
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+secrets.*
+credentials.*
+*.token
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs & temp
+*.log
+tmp/
+temp/
