@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from llmsonas.construction.profile import m1_profile, situation_bio
+from llmsonas.construction.segment import population_bands, segment_record
 from llmsonas.construction.select import cluster_archetypes, stratified_sample
 from llmsonas.data.dump import load_hd2, recommend_ratio, to_user_records
 from llmsonas.features.build import numeric_features
@@ -56,7 +57,11 @@ class DumpCase:
     appid: int
     event_cutoff: int          # unix seconds, the announcement date
     change: str                # neutral statement of the decision (no valence)
-    question: str
+    # One neutral question for every case: the decision itself lives in the
+    # persona's situation (``change`` in the bio), not in the question wording.
+    # A question that restated the event with valence ("after promising never
+    # to...") made the model answer the framing, identically for all personas.
+    question: str = "Would this player recommend the game to other players after this change?"
     note: str = ""             # the split axis / why it isn't a unanimous shock
     gt_window_days: int = 7
     n_personas: int = 20
@@ -80,11 +85,6 @@ PAYDAY2 = DumpCase(
         "The developer had said the game would never have microtransactions, and "
         "has now added paid weapon safes and drills that affect gameplay."
     ),
-    question=(
-        "Payday 2's developer has added paid microtransactions after promising the "
-        "game would never have them. Would this player recommend the game after "
-        "this change?"
-    ),
     note="split axis: betrayal scales with investment (playtime/tenure). Backlash, un-reverted.",
 )
 
@@ -96,11 +96,6 @@ TOTALWAR3 = DumpCase(
     change=(
         "The developer has released a new paid DLC that adds fewer new units and "
         "characters than earlier DLC did at the same price."
-    ),
-    question=(
-        "Total War: Warhammer III's developer has released a paid DLC that adds "
-        "less new content than earlier DLC at the same price. Would this player "
-        "recommend the game after this?"
     ),
     note="split axis: value-sensitivity of invested owners. Second backlash, different mechanism, less memorised.",
 )
@@ -114,11 +109,6 @@ NOMANSSKY = DumpCase(
         "The developer has released a large free update ('NEXT') that adds "
         "multiplayer and base building and overhauls the game's visuals."
     ),
-    question=(
-        "No Man's Sky has received a major free update adding multiplayer and "
-        "overhauling the game. Would this player recommend the game after this "
-        "update?"
-    ),
     note="redemption UP-swing; split axis: whether a lapsed/critical owner returns. Memorisation caveat (famous).",
 )
 
@@ -130,10 +120,6 @@ HELLDIVERS2 = DumpCase(
     change=(
         "The game now requires linking a PlayStation Network account to keep "
         "playing on PC."
-    ),
-    question=(
-        "Helldivers 2 now requires linking a PlayStation Network account to keep "
-        "playing on PC. Would this player recommend the game after this change?"
     ),
     note="CONTRAST ONLY: dump post-dates Sony's reversal (~58% edited), so the measured swing washes out.",
 )
@@ -152,6 +138,23 @@ def _offline_backend(messages: list[dict], model: str) -> float:
 
 def _row(r: MethodResult) -> str:
     return f"{r.method:<5} {r.p_hat:>7.3f}   [{r.ci[0]:.3f}, {r.ci[1]:.3f}]   {r.spread:>6.3f}   {r.jsd:>7.4f}"
+
+
+def _print_persona_mix(records, idx, bands, bios) -> None:
+    """Show how the surveyed personas segment, so the spread is visible before the
+    answers come back, and print one bio verbatim (Approach §3.4 guardrail e)."""
+    from collections import Counter
+
+    segs = [segment_record(records[i], bands) for i in idx]
+    inv = Counter(s.investment for s in segs)
+    voc = Counter(s.vocalness for s in segs)
+    mono = sum(s.loyal_mono for s in segs)
+    inv_s = " ".join(f"{k}:{inv[k]}" for k in
+                     ("light", "casual", "regular", "dedicated", "hardcore") if inv[k])
+    voc_s = " ".join(f"{k}:{voc[k]}" for k in
+                     ("quiet", "occasional", "vocal", "prolific") if voc[k])
+    print(f"[mix]   investment [{inv_s}] | vocalness [{voc_s}] | loyal-single-game: {mono}")
+    print(f"[bio]   e.g. {bios[0]}")
 
 
 def run_dump_smoke(case: DumpCase) -> None:
@@ -194,6 +197,7 @@ def run_dump_smoke(case: DumpCase) -> None:
     pool = pre.sample(n=min(case.pool, len(pre)), random_state=case.seed)
     records = to_user_records(pool, require_review=False)
     X = numeric_features(records)
+    bands = population_bands(records)
     print(f"[data]  persona pool {len(records)} pre-event reviewers | feature matrix {X.shape}")
 
     results: list[MethodResult] = []
@@ -203,13 +207,14 @@ def run_dump_smoke(case: DumpCase) -> None:
     results.append(score("M1", m1, None, gt, seed=case.seed))
 
     a_idx, a_w = stratified_sample(records, case.n_personas, seed=case.seed)
-    bios_a = [situation_bio(records[i], case.change) for i in a_idx]
+    bios_a = [situation_bio(records[i], case.change, bands) for i in a_idx]
+    _print_persona_mix(records, a_idx, bands, bios_a)
     Pa = survey(bios_a, MODEL_ID, Q, LABELS, grounded=True, backend=backend)
     res_a = score("M2a", Pa, a_w, gt, seed=case.seed)
     results.append(res_a)
 
     b_idx, b_w = cluster_archetypes(X, records, case.n_personas, seed=case.seed)
-    bios_b = [situation_bio(records[i], case.change) for i in b_idx]
+    bios_b = [situation_bio(records[i], case.change, bands) for i in b_idx]
     Pb = survey(bios_b, MODEL_ID, Q, LABELS, grounded=True, backend=backend)
     results.append(score("M2b", Pb, b_w, gt, seed=case.seed))
 
