@@ -124,7 +124,21 @@ HELLDIVERS2 = DumpCase(
     note="CONTRAST ONLY: dump post-dates Sony's reversal (~58% edited), so the measured swing washes out.",
 )
 
-CASES = {c.key: c for c in (PAYDAY2, TOTALWAR3, NOMANSSKY, HELLDIVERS2)}
+CSGO = DumpCase(
+    key="csgo",
+    title="CS:GO paid -> free-to-play (2018-12-06)",
+    appid=730,
+    event_cutoff=1544054400,   # 2018-12-06 00:00 UTC
+    change=(
+        "The game, which every current owner paid for, is now free-to-play for "
+        "everyone."
+    ),
+    note="DIAGNOSTIC: a universal shock — every paid owner is devalued at once, so "
+         "there is little to split on. Graph expected not to help; kept to test whether "
+         "the enriched personas still collapse the way the anchoring finding predicts.",
+)
+
+CASES = {c.key: c for c in (PAYDAY2, TOTALWAR3, NOMANSSKY, HELLDIVERS2, CSGO)}
 
 
 def _offline_backend(messages: list[dict], model: str) -> float:
