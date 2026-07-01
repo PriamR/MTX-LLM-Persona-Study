@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -160,6 +161,13 @@ def run_dump_smoke(case: DumpCase) -> None:
     LLMSONAS_OFFLINE is unset; otherwise a deterministic stub stands in for the
     model so the wiring can be exercised without a network round-trip.
     """
+    # Windows terminals default to a legacy code page (e.g. cp932) that can't
+    # encode the report's punctuation; force UTF-8 so a run doesn't die mid-print.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
     offline = bool(os.getenv("LLMSONAS_OFFLINE")) or not os.getenv("TOGETHER_API_KEY")
     backend = _offline_backend if offline else None
     cut = case.event_cutoff
@@ -223,12 +231,18 @@ def run_dump_smoke(case: DumpCase) -> None:
     closer = abs(res_a.p_hat - gt) < abs(res_a.p_hat - pre_ratio)
     print(f"  -> M2a is {'closer to the outcome than to the prior' if closer else 'anchored on the prior'}")
 
-    # Shock-vs-split read: a near-uniform persona response that sits on the prior
-    # is the CS:GO failure mode (nothing heterogeneous for the graph to carry).
-    shock_like = res_a.spread < 0.12 and abs(res_a.p_hat - pre_ratio) < 0.08
-    print(f"  simulation reads as: "
-          f"{'SHOCK-LIKE — near-uniform personas echoing the prior (graph has little to carry)' if shock_like else 'a heterogeneous split (personas disagree — the graph can act)'} "
-          f"[M2a spread={res_a.spread:.3f}]")
+    # Whether M3 can do anything is a question of dispersion, not of which pole
+    # the personas land on: a near-uniform response leaves the graph nothing to
+    # carry whether it echoes the prior (the CS:GO shock) or collapses to one
+    # verdict far from it (the situation-bio failure on an 8B model).
+    uniform = res_a.spread < 0.12
+    if uniform:
+        where = ("echoing the prior" if abs(res_a.p_hat - pre_ratio) < 0.08
+                 else "collapsed to one verdict, off the prior")
+        read = f"near-uniform personas {where} (graph has nothing to carry)"
+    else:
+        read = "a heterogeneous split (personas disagree, the graph can act)"
+    print(f"  simulation reads as: {read} [M2a spread={res_a.spread:.3f}]")
 
     print("\nhomophily null-shuffle check (M3 graph):")
     print(f"  Moran's I = {null.observed:+.4f} | null mean = {null.null_mean:+.4f} | "
