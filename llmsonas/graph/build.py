@@ -9,7 +9,14 @@ the row-stochastic matrix W the Friedkin-Johnsen update runs on.
 from __future__ import annotations
 
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
+
+
+def cosine_similarity(X: np.ndarray) -> np.ndarray:
+    """Pairwise cosine similarity of the rows of ``X`` (NumPy, no scikit-learn)."""
+    norm = np.linalg.norm(X, axis=1, keepdims=True)
+    norm[norm == 0] = 1.0
+    U = X / norm
+    return U @ U.T
 
 
 def build_influence_matrix(

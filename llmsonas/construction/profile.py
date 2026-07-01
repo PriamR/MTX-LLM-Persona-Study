@@ -39,5 +39,26 @@ def third_person_bio(r: UserRecord) -> str:
     )
 
 
+def situation_bio(r: UserRecord, change: str) -> str:
+    """Situation-framing profile: neutral behavioural facts + the concrete change
+    faced, with the prior verdict WITHHELD so the model must reason forward.
+
+    The smoke test showed a positive-review bio makes the model parrot the prior
+    stance (P->1.0); stripping the verdict but keeping the person's real
+    investment (playtime, tenure proxy, ownership, vocalness) is the fix. The
+    template is mechanical and identical across cases — only ``change`` differs —
+    so nothing is tuned to a known answer. No stance, no valence, no quote.
+    """
+    owned = f"{r.num_games_owned} games" if r.num_games_owned else "an unknown number of games"
+    reviews = "no other reviews" if r.num_reviews <= 1 else f"{r.num_reviews - 1} other review(s)"
+    return (
+        f"This Steam player owns {owned} and has written {reviews}. They have put "
+        f"about {_hours(r.playtime_forever)} hours into this game "
+        f"({_hours(r.playtime_at_review)} of them by the time they first reviewed it), "
+        f"so it is a title they have genuinely invested in. {change}"
+    )
+
+
+
 def m1_profile(i: int) -> str:
     return M1_PROFILES[i % len(M1_PROFILES)]

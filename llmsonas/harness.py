@@ -8,12 +8,16 @@ truth.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable, Optional
 
 import numpy as np
 
 from llmsonas.scoring.metrics import aggregate, bootstrap_ci, js_divergence
 from llmsonas.survey.prompt import grounded_messages, naive_messages
-from llmsonas.survey.together_client import answer_probability
+
+# A survey backend maps (messages, model) -> P(recommend) or None. Default is the
+# Together client; an offline stub can be injected for wiring runs without a key.
+Backend = Callable[[list, str], Optional[float]]
 
 
 @dataclass
@@ -35,12 +39,21 @@ def survey(
     *,
     grounded: bool,
     fallback: float = 0.5,
+    backend: Backend | None = None,
 ) -> np.ndarray:
-    """Query each persona; return per-persona P(recommend)."""
+    """Query each persona; return per-persona P(recommend).
+
+    ``backend`` defaults to the Together client (imported lazily so an offline
+    wiring run needn't have the HTTP client installed).
+    """
+    if backend is None:
+        from llmsonas.survey.together_client import answer_probability
+
+        backend = answer_probability
     build = grounded_messages if grounded else naive_messages
     out = []
     for item in items:
-        p = answer_probability(build(item, question, labels), model)
+        p = backend(build(item, question, labels), model)
         out.append(fallback if p is None else p)
     return np.asarray(out, dtype=float)
 

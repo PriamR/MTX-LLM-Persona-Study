@@ -59,3 +59,4 @@ class SmokeConfig:
 
 
 SMOKE = SmokeConfig()
+

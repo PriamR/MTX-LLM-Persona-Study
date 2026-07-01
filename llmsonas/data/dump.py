@@ -1,15 +1,22 @@
-"""Historical Steam review dump (forgemaster) — the offline time-split source.
+"""Historical Steam review dumps — the offline time-split source.
 
-One DuckDB pass filters a game's rows out of the ~7 GB of CSVs and caches them as
-Parquet, so repeated runs are instant. Personas are built from pre-event rows and
-scored against the post-event recommend ratio: the held-out time-split that keeps
-every score a genuine prediction rather than a fit.
+Two shapes are handled:
+
+* the forgemaster CS:GO dump — ~7 GB of CSVs sharded by review id, one DuckDB
+  pass filters an appid out and caches it as Parquet so reruns are instant;
+* the "Steam Reviews 2024" per-app dump — one CSV per appid inside a zip, a
+  different (author-prefixed) schema and, notably, **no review text**. Small
+  enough to read straight through pandas, so no DuckDB or cache is needed.
+
+Either way personas are built from pre-event rows and scored against the
+post-event recommend ratio: the held-out time-split that keeps every score a
+genuine prediction rather than a fit.
 """
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
-import duckdb
 import pandas as pd
 
 from llmsonas.config import ROOT
@@ -18,6 +25,10 @@ from llmsonas.data.ingest import UserRecord
 DUMP_DIR = ROOT / "Historical Data"
 CACHE_DIR = ROOT / "data"
 
+# "Steam Reviews 2024" per-app dump (one CSV per appid inside the zip).
+HD2_ZIP = DUMP_DIR / "Steam 2024 reviews.zip"
+HD2_MEMBER = "SteamReviews2024/{appid}.csv"
+
 
 def _cache_path(appid: int) -> Path:
     return CACHE_DIR / f"reviews_{appid}.parquet"
@@ -25,6 +36,8 @@ def _cache_path(appid: int) -> Path:
 
 def extract_game(appid: int, *, dump_dir: Path = DUMP_DIR, force: bool = False) -> Path:
     """Filter one appid's rows out of the CSV dump into a cached Parquet file."""
+    import duckdb
+
     out = _cache_path(appid)
     if out.exists() and not force:
         return out
@@ -57,8 +70,45 @@ def extract_game(appid: int, *, dump_dir: Path = DUMP_DIR, force: bool = False) 
 
 
 def load_game(appid: int) -> pd.DataFrame:
+    import duckdb
+
     path = _cache_path(appid).as_posix()
     return duckdb.sql(f"SELECT * FROM read_parquet('{path}')").df()
+
+
+def load_hd2(appid: int = 553850, *, zip_path: Path = HD2_ZIP) -> pd.DataFrame:
+    """Load one appid from the "Steam Reviews 2024" per-app dump.
+
+    The schema is author-prefixed and carries no review text, so the columns are
+    renamed to the shared shape (``voted_up``, ``playtime_*``, ``num_*``, ``ts``)
+    and ``review`` is left empty. ``edited`` flags rows whose stored verdict was
+    changed after creation — heavy on this game because the May-2024 event was
+    reversed days later and many reviews were rewritten.
+    """
+    member = HD2_MEMBER.format(appid=appid)
+    with zipfile.ZipFile(zip_path) as zf, zf.open(member) as fh:
+        df = pd.read_csv(
+            fh,
+            usecols=[
+                "language", "timestamp_created", "timestamp_updated", "voted_up",
+                "author_steamid", "author_num_games_owned", "author_num_reviews",
+                "author_playtime_forever", "author_playtime_at_review",
+            ],
+        )
+    df = df.rename(
+        columns={
+            "author_steamid": "steamid",
+            "author_playtime_forever": "playtime_forever",
+            "author_playtime_at_review": "playtime_at_review",
+            "author_num_games_owned": "num_games_owned",
+            "author_num_reviews": "num_reviews",
+            "timestamp_created": "ts",
+        }
+    )
+    df["voted_up"] = df["voted_up"].astype(bool)
+    df["edited"] = df["timestamp_updated"] > df["ts"] + 60  # later rewrite
+    df["review"] = ""  # this dump ships no review text
+    return df
 
 
 def recommend_ratio(
@@ -75,21 +125,36 @@ def recommend_ratio(
     return ratio, int(len(sub))
 
 
-def to_user_records(df: pd.DataFrame) -> list[UserRecord]:
+def _int(x) -> int:
+    """Coerce a possibly-missing numeric cell (NaN/None) to a plain int."""
+    try:
+        if x is None or x != x:  # NaN
+            return 0
+        return int(x)
+    except (TypeError, ValueError):
+        return 0
+
+
+def to_user_records(df: pd.DataFrame, *, require_review: bool = True) -> list[UserRecord]:
+    """Rows -> ``UserRecord``s.
+
+    ``require_review=False`` keeps rows that carry no review text (the 2024 dump),
+    where personas are grounded in behavioural facts alone rather than text.
+    """
     records: list[UserRecord] = []
     for row in df.itertuples(index=False):
-        review = (row.review or "").strip()
-        if not review:
+        review = (getattr(row, "review", "") or "").strip()
+        if require_review and not review:
             continue
         records.append(
             UserRecord(
                 steamid=str(row.steamid),
                 voted_up=bool(row.voted_up),
-                playtime_forever=int(row.playtime_forever or 0),
-                playtime_at_review=int(row.playtime_at_review or 0),
-                num_games_owned=int(row.num_games_owned or 0),
-                num_reviews=int(row.num_reviews or 0),
-                timestamp=int(row.ts or 0),
+                playtime_forever=_int(row.playtime_forever),
+                playtime_at_review=_int(row.playtime_at_review),
+                num_games_owned=_int(row.num_games_owned),
+                num_reviews=_int(row.num_reviews),
+                timestamp=_int(row.ts),
                 review=review,
             )
         )

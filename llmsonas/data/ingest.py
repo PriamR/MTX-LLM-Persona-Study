@@ -15,12 +15,21 @@ from dataclasses import dataclass
 
 from llmsonas.config import SENTI_MINTED_PATH
 
-# Reuse the Senti-Minted Steam client instead of re-implementing the fetch.
-if str(SENTI_MINTED_PATH) not in sys.path:
-    sys.path.insert(0, str(SENTI_MINTED_PATH))
-from app.clients import steam  # noqa: E402
-
 PAGE_CAP = 60  # safety bound on pagination
+
+
+def _steam_client():
+    """Import the Senti-Minted Steam client on demand.
+
+    Kept lazy so the offline dump loaders can import this module (for
+    ``UserRecord``) without a Senti-Minted checkout on the path — only the live
+    crawl actually needs the client.
+    """
+    if str(SENTI_MINTED_PATH) not in sys.path:
+        sys.path.insert(0, str(SENTI_MINTED_PATH))
+    from app.clients import steam
+
+    return steam
 
 
 @dataclass
@@ -55,6 +64,7 @@ def _to_record(raw: dict) -> UserRecord | None:
 
 
 async def _crawl(appid: int, target: int, language: str) -> list[UserRecord]:
+    steam = _steam_client()
     records: dict[str, UserRecord] = {}  # keyed by steamid to de-dupe
     cursor, seen = "*", set()
     for _ in range(PAGE_CAP):
