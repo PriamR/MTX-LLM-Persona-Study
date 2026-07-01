@@ -1,5 +1,6 @@
-# Private planning notes — never publish
-context.md
+# Working notes / progress docs are local-only — only README.md is tracked
+*.md
+!README.md
 
 # Secrets / credentials
 .env
