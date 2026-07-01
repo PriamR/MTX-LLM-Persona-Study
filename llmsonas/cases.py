@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from llmsonas.construction.exposure import build_footprint, exposures
 from llmsonas.construction.profile import m1_profile, situation_bio
 from llmsonas.construction.segment import population_bands, segment_record
 from llmsonas.construction.select import cluster_archetypes, stratified_sample
@@ -81,9 +82,15 @@ PAYDAY2 = DumpCase(
     title="Payday 2 microtransactions (2015-10-15)",
     appid=218620,
     event_cutoff=1444867200,   # 2015-10-15 00:00 UTC
+    # Mechanics only: the earlier "...that affect gameplay" was the community's
+    # contested *characterization* of the update, not a fact — an editorial cue
+    # strong enough to flatten any behavioural axis in the bio (guardrail (a):
+    # facts, never the valence). What shipped: purchasable drills open safes
+    # that drop in-game; the skins inside can carry stat bonuses.
     change=(
         "The developer had said the game would never have microtransactions, and "
-        "has now added paid weapon safes and drills that affect gameplay."
+        "has now added purchasable drills that open safes containing weapon "
+        "skins, some of which carry stat bonuses."
     ),
     note="split axis: betrayal scales with investment (playtime/tenure). Backlash, un-reverted.",
 )
@@ -154,7 +161,7 @@ def _row(r: MethodResult) -> str:
     return f"{r.method:<5} {r.p_hat:>7.3f}   [{r.ci[0]:.3f}, {r.ci[1]:.3f}]   {r.spread:>6.3f}   {r.jsd:>7.4f}"
 
 
-def _print_persona_mix(records, idx, bands, bios) -> None:
+def _print_persona_mix(records, idx, bands, bios, expo) -> None:
     """Show how the surveyed personas segment, so the spread is visible before the
     answers come back, and print one bio verbatim (Approach §3.4 guardrail e)."""
     from collections import Counter
@@ -167,8 +174,39 @@ def _print_persona_mix(records, idx, bands, bios) -> None:
                      ("light", "casual", "regular", "dedicated", "hardcore") if inv[k])
     voc_s = " ".join(f"{k}:{voc[k]}" for k in
                      ("quiet", "occasional", "vocal", "prolific") if voc[k])
+    exp = Counter(_expo_band(expo, records[i].steamid) for i in idx)
+    exp_s = " ".join(f"{k}:{exp[k]}" for k in
+                     ("none", "premium", "mixed", "f2p_leaning") if exp[k])
     print(f"[mix]   investment [{inv_s}] | vocalness [{voc_s}] | loyal-single-game: {mono}")
+    print(f"[mix]   monetization exposure [{exp_s}]")
     print(f"[bio]   e.g. {bios[0]}")
+
+
+def _expo_band(expo, steamid: str) -> str:
+    e = expo.get(steamid)
+    return e.band if e is not None else "none"
+
+
+def _print_gap_report(gaps: list[dict], records, idx, expo) -> None:
+    """The un-softmaxed A−B logit gap per persona: whether the features moved the
+    model at all is visible here even when every P saturates to the same pole."""
+    from llmsonas.survey.together_client import logit_gap
+
+    deltas = [logit_gap(lp) for lp in gaps]
+    known = [d for d in deltas if d is not None]
+    if not known:
+        return
+    arr = np.asarray(known)
+    print(f"\nraw option-logit gap Δ = logprob(A) − logprob(B), M2a personas:")
+    print(f"  overall: median {np.median(arr):+.2f} | min {arr.min():+.2f} | "
+          f"max {arr.max():+.2f} | std {arr.std():.2f}")
+    by_band: dict[str, list[float]] = {}
+    for d, i in zip(deltas, idx):
+        if d is not None:
+            by_band.setdefault(_expo_band(expo, records[i].steamid), []).append(d)
+    parts = [f"{band}: {np.mean(v):+.2f} (n={len(v)})"
+             for band, v in sorted(by_band.items())]
+    print(f"  mean by exposure band: {' | '.join(parts)}")
 
 
 def run_dump_smoke(case: DumpCase) -> None:
@@ -212,7 +250,12 @@ def run_dump_smoke(case: DumpCase) -> None:
     records = to_user_records(pool, require_review=False)
     X = numeric_features(records)
     bands = population_bands(records, cut)
-    print(f"[data]  persona pool {len(records)} pre-event reviewers | feature matrix {X.shape}")
+    # Cross-app monetization exposure — the answer axis the 70B run showed the
+    # other markers don't carry. First call per case scans the dump (~90s), then
+    # it's a cached parquet read.
+    expo = exposures(build_footprint(case.appid, cut))
+    print(f"[data]  persona pool {len(records)} pre-event reviewers | feature matrix {X.shape} "
+          f"| cross-app footprint: {sum(1 for r in records if r.steamid in expo)}/{len(records)}")
 
     results: list[MethodResult] = []
 
@@ -221,14 +264,26 @@ def run_dump_smoke(case: DumpCase) -> None:
     results.append(score("M1", m1, None, gt, seed=case.seed))
 
     a_idx, a_w = stratified_sample(records, case.n_personas, seed=case.seed)
-    bios_a = [situation_bio(records[i], case.change, bands) for i in a_idx]
-    _print_persona_mix(records, a_idx, bands, bios_a)
-    Pa = survey(bios_a, MODEL_ID, Q, LABELS, grounded=True, backend=backend)
+    bios_a = [situation_bio(records[i], case.change, bands, expo.get(records[i].steamid))
+              for i in a_idx]
+    _print_persona_mix(records, a_idx, bands, bios_a, expo)
+    # Collect the raw option logprobs for M2a so the report can show the logit
+    # gaps a saturated P hides (only the real client can supply them).
+    gaps_a: list[dict] = []
+    if backend is None:
+        from llmsonas.survey.together_client import answer_probability
+
+        def m2a_backend(msgs: list[dict], mdl: str) -> float | None:
+            return answer_probability(msgs, mdl, detail=gaps_a)
+    else:
+        m2a_backend = backend
+    Pa = survey(bios_a, MODEL_ID, Q, LABELS, grounded=True, backend=m2a_backend)
     res_a = score("M2a", Pa, a_w, gt, seed=case.seed)
     results.append(res_a)
 
     b_idx, b_w = cluster_archetypes(X, records, case.n_personas, seed=case.seed)
-    bios_b = [situation_bio(records[i], case.change, bands) for i in b_idx]
+    bios_b = [situation_bio(records[i], case.change, bands, expo.get(records[i].steamid))
+              for i in b_idx]
     Pb = survey(bios_b, MODEL_ID, Q, LABELS, grounded=True, backend=backend)
     results.append(score("M2b", Pb, b_w, gt, seed=case.seed))
 
@@ -268,6 +323,9 @@ def run_dump_smoke(case: DumpCase) -> None:
     else:
         read = "a heterogeneous split (personas disagree, the graph can act)"
     print(f"  simulation reads as: {read} [M2a spread={res_a.spread:.3f}]")
+
+    if gaps_a:
+        _print_gap_report(gaps_a, records, a_idx, expo)
 
     print("\nhomophily null-shuffle check (M3 graph):")
     print(f"  Moran's I = {null.observed:+.4f} | null mean = {null.null_mean:+.4f} | "

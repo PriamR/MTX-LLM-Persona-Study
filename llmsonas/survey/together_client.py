@@ -38,8 +38,8 @@ def _get_client() -> httpx.Client:
     return _client
 
 
-def _p_from_dist(dist: dict[str, float]) -> float | None:
-    """Softmax P(A=Recommend) over the option tokens A/B in one position's dist."""
+def _option_logprobs(dist: dict[str, float]) -> dict[str, float]:
+    """Raw logprobs of the option tokens A/B found in one position's dist."""
     lp: dict[str, float] = {}
     for token, logprob in dist.items():
         if logprob is None:
@@ -47,6 +47,12 @@ def _p_from_dist(dist: dict[str, float]) -> float | None:
         label = token.strip().upper()
         if label in ("A", "B") and label not in lp:
             lp[label] = logprob
+    return lp
+
+
+def _p_from_dist(dist: dict[str, float]) -> float | None:
+    """Softmax P(A=Recommend) over the option tokens A/B in one position's dist."""
+    lp = _option_logprobs(dist)
     if not lp:
         return None
     floor = min(lp.values()) - 10.0
@@ -55,10 +61,32 @@ def _p_from_dist(dist: dict[str, float]) -> float | None:
     return ea / (ea + eb)
 
 
+def logit_gap(lp: dict[str, float]) -> float | None:
+    """logprob(A) − logprob(B) with the same floor as ``_p_from_dist``.
+
+    The per-persona signal a saturated P hides: at P≈0 every persona rounds to
+    the same number, but the raw gap still shows whether the features moved the
+    model at all (a −11 vs −19 nat gap is invisible after the softmax).
+    """
+    if not lp:
+        return None
+    floor = min(lp.values()) - 10.0
+    return lp.get("A", floor) - lp.get("B", floor)
+
+
 def answer_probability(
-    messages: list[dict], model: str, *, top_logprobs: int = 5, retries: int = 5
+    messages: list[dict],
+    model: str,
+    *,
+    top_logprobs: int = 5,
+    retries: int = 5,
+    detail: list[dict[str, float]] | None = None,
 ) -> float | None:
-    """P(recommend) for one persona, or None if the option tokens never appear."""
+    """P(recommend) for one persona, or None if the option tokens never appear.
+
+    ``detail``, when given, collects the raw option-token logprobs per call so a
+    run can report the un-softmaxed logit gaps alongside the P values.
+    """
     client = _get_client()
     body = {
         "model": model,
@@ -74,7 +102,10 @@ def answer_probability(
             resp.raise_for_status()
             logprobs = resp.json()["choices"][0].get("logprobs") or {}
             positions = logprobs.get("top_logprobs") or []
-            return _p_from_dist(positions[0]) if positions else None
+            dist = positions[0] if positions else {}
+            if detail is not None:
+                detail.append(_option_logprobs(dist))
+            return _p_from_dist(dist) if dist else None
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in _RETRY_STATUS or attempt == retries - 1:
                 raise

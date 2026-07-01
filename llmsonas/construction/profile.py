@@ -6,6 +6,7 @@ No demographic invention — only what the behavioural record actually contains.
 """
 from __future__ import annotations
 
+from llmsonas.construction.exposure import Exposure, exposure_clause
 from llmsonas.construction.segment import Bands, Segment, segment_record
 from llmsonas.data.ingest import UserRecord
 
@@ -76,7 +77,9 @@ def _investment_clause(r: UserRecord, seg: Segment) -> str:
     return f"This Steam player {_INVESTMENT[seg.investment]}, with about {hours} hours in it"
 
 
-def situation_bio(r: UserRecord, change: str, bands: Bands) -> str:
+def situation_bio(
+    r: UserRecord, change: str, bands: Bands, exposure: Exposure | None = None
+) -> str:
     """Situation-framing profile: neutral behavioural facts + the concrete change
     faced, with the prior verdict WITHHELD so the model must reason forward.
 
@@ -86,6 +89,10 @@ def situation_bio(r: UserRecord, change: str, bands: Bands) -> str:
     stops 100 personas collapsing into one voice (see ``segment.py``). The
     template is mechanical and identical across cases — only ``change`` differs —
     so nothing is tuned to a known answer. No stance, no valence, no quote.
+
+    ``exposure`` (when the user has a cross-app footprint) adds the one axis a
+    monetisation change actually splits on: whether this player already plays
+    games financed by in-game purchases (see ``exposure.py``).
     """
     seg = segment_record(r, bands)
     parts = [_investment_clause(r, seg) + "."]
@@ -115,6 +122,10 @@ def situation_bio(r: UserRecord, change: str, bands: Bands) -> str:
         parts.append("They backed the game during its early access.")
     if seg.tenure in _TENURE:
         parts.append(_TENURE[seg.tenure])
+
+    clause = exposure_clause(exposure)
+    if clause:
+        parts.append(clause)
 
     parts.append(change)
     return " ".join(parts)
