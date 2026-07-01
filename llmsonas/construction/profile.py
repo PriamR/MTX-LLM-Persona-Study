@@ -58,6 +58,15 @@ _LIBRARY = {
     "moderate": "They own a moderate library of games",
     "broad": "They own a large, varied library of games",
 }
+_CHANNEL = {
+    "steam": "They paid for the game on Steam.",
+    "key": "They did not buy it on Steam — they activated it from a key or bundle.",
+    "free": "They received the game for free rather than paying for it.",
+}
+_TENURE = {
+    "recent": "They only picked the game up fairly recently before this.",
+    "veteran": "They have owned and played it since long before this — a long-time owner.",
+}
 
 
 def _investment_clause(r: UserRecord, seg: Segment) -> str:
@@ -100,6 +109,12 @@ def situation_bio(r: UserRecord, change: str, bands: Bands) -> str:
             f"They held off judging it until they had put in serious time "
             f"(about {_hours(r.playtime_at_review)} hours)."
         )
+
+    parts.append(_CHANNEL[seg.channel])
+    if seg.early_access:
+        parts.append("They backed the game during its early access.")
+    if seg.tenure in _TENURE:
+        parts.append(_TENURE[seg.tenure])
 
     parts.append(change)
     return " ".join(parts)

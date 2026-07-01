@@ -197,7 +197,7 @@ def run_dump_smoke(case: DumpCase) -> None:
     pool = pre.sample(n=min(case.pool, len(pre)), random_state=case.seed)
     records = to_user_records(pool, require_review=False)
     X = numeric_features(records)
-    bands = population_bands(records)
+    bands = population_bands(records, cut)
     print(f"[data]  persona pool {len(records)} pre-event reviewers | feature matrix {X.shape}")
 
     results: list[MethodResult] = []
@@ -218,7 +218,13 @@ def run_dump_smoke(case: DumpCase) -> None:
     Pb = survey(bios_b, MODEL_ID, Q, LABELS, grounded=True, backend=backend)
     results.append(score("M2b", Pb, b_w, gt, seed=case.seed))
 
-    influence = np.log1p([records[i].num_reviews for i in a_idx])
+    # Hub weight = how far each voice actually carried: helpful votes on the
+    # review, not just how many reviews the person wrote. Fall back to review
+    # count where a dump ships no vote counts (all-zero votes_up).
+    votes = np.array([records[i].votes_up for i in a_idx], dtype=float)
+    if votes.sum() <= 0:
+        votes = np.array([records[i].num_reviews for i in a_idx], dtype=float)
+    influence = np.log1p(votes)
     W = build_influence_matrix(X[a_idx], case.knn_k, influence=influence, seed=case.seed)
     x_final, _ = friedkin_johnsen(W, Pa, case.susceptibility, case.graph_rounds)
     results.append(score("M3", x_final, a_w, gt, seed=case.seed))

@@ -44,6 +44,12 @@ class UserRecord:
     num_reviews: int
     timestamp: int          # unix, review creation
     review: str
+    # Extra behavioural markers (default to the common case so records from
+    # sources that don't carry them — the forgemaster parquet — still build).
+    votes_up: int = 0                    # helpful votes the review earned (reach/influence)
+    steam_purchase: bool = True          # bought on Steam vs activated a key elsewhere
+    received_for_free: bool = False      # got the game free (press/gift key)
+    early_access: bool = False           # review written during the game's early access
 
 
 def _to_record(raw: dict) -> UserRecord | None:
@@ -60,6 +66,10 @@ def _to_record(raw: dict) -> UserRecord | None:
         num_reviews=int(author.get("num_reviews", 0)),
         timestamp=int(raw.get("timestamp_created", 0)),
         review=(raw.get("review") or "").strip(),
+        votes_up=int(raw.get("votes_up", 0) or 0),
+        steam_purchase=bool(raw.get("steam_purchase", True)),
+        received_for_free=bool(raw.get("received_for_free", False)),
+        early_access=bool(raw.get("written_during_early_access", False)),
     )
 
 

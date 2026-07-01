@@ -91,6 +91,8 @@ def load_hd2(appid: int = 553850, *, zip_path: Path = HD2_ZIP) -> pd.DataFrame:
             fh,
             usecols=[
                 "language", "timestamp_created", "timestamp_updated", "voted_up",
+                "votes_up", "steam_purchase", "received_for_free",
+                "written_during_early_access",
                 "author_steamid", "author_num_games_owned", "author_num_reviews",
                 "author_playtime_forever", "author_playtime_at_review",
             ],
@@ -103,11 +105,14 @@ def load_hd2(appid: int = 553850, *, zip_path: Path = HD2_ZIP) -> pd.DataFrame:
             "author_num_games_owned": "num_games_owned",
             "author_num_reviews": "num_reviews",
             "timestamp_created": "ts",
+            "written_during_early_access": "early_access",
         }
     )
     df["voted_up"] = df["voted_up"].astype(bool)
     df["edited"] = df["timestamp_updated"] > df["ts"] + 60  # later rewrite
     df["review"] = ""  # this dump ships no review text
+    for col in ("steam_purchase", "received_for_free", "early_access"):
+        df[col] = df[col].astype(str).str.lower().isin(("true", "1", "t"))
     return df
 
 
@@ -156,6 +161,10 @@ def to_user_records(df: pd.DataFrame, *, require_review: bool = True) -> list[Us
                 num_reviews=_int(row.num_reviews),
                 timestamp=_int(row.ts),
                 review=review,
+                votes_up=_int(getattr(row, "votes_up", 0)),
+                steam_purchase=bool(getattr(row, "steam_purchase", True)),
+                received_for_free=bool(getattr(row, "received_for_free", False)),
+                early_access=bool(getattr(row, "early_access", False)),
             )
         )
     return records

@@ -25,29 +25,42 @@ from llmsonas.data.ingest import UserRecord
 @dataclass(frozen=True)
 class Bands:
     """Population quantile cut-points, in the records' native units (minutes /
-    counts). Computed once over the pool; every persona is binned against these."""
+    counts / seconds). Computed once over the pool; every persona is binned
+    against these."""
 
     playtime: tuple[float, float, float, float]   # p25, p50, p75, p90 of playtime_forever
     reviews: tuple[float, float, float]            # p50, p75, p90 of num_reviews
     owned: tuple[float, float]                     # p25, p75 of num_games_owned (known only)
     owned_known: bool                              # False when the dump ships no library size
+    tenure: tuple[float, float]                    # p33, p66 of (event - review) seconds
+    event_cutoff: int                              # the event date, to age each review against
 
 
 def _q(values: np.ndarray, qs: tuple[float, ...]) -> tuple[float, ...]:
     return tuple(float(np.quantile(values, q)) for q in qs)
 
 
-def population_bands(records: list[UserRecord]) -> Bands:
-    """Derive the binning thresholds from the pool the personas are sampled from."""
+def population_bands(records: list[UserRecord], event_cutoff: int) -> Bands:
+    """Derive the binning thresholds from the pool the personas are sampled from.
+
+    ``event_cutoff`` ages each review (how long *before* the decision it was
+    written) into a tenure band. We deliberately take tenure from the review
+    timestamp — a fixed, review-time fact — rather than from the dump-time
+    ``last_played`` / ``playtime_last_two_weeks`` fields, which for a years-old
+    event describe activity at scrape time and would leak post-event information.
+    """
     pt = np.asarray([r.playtime_forever for r in records], dtype=float)
     nr = np.asarray([r.num_reviews for r in records], dtype=float)
     owned = np.asarray([r.num_games_owned for r in records], dtype=float)
     known = owned[owned > 0]
+    tenure = np.asarray([max(0, event_cutoff - r.timestamp) for r in records], dtype=float)
     return Bands(
         playtime=_q(pt, (0.25, 0.50, 0.75, 0.90)),          # type: ignore[arg-type]
         reviews=_q(nr, (0.50, 0.75, 0.90)),                  # type: ignore[arg-type]
         owned=(_q(known, (0.25, 0.75)) if len(known) else (0.0, 0.0)),  # type: ignore[assignment]
         owned_known=bool(len(known) >= max(10, 0.2 * len(records))),
+        tenure=_q(tenure, (0.33, 0.66)),                     # type: ignore[assignment]
+        event_cutoff=int(event_cutoff),
     )
 
 
@@ -61,6 +74,9 @@ class Segment:
     library: str         # focused | moderate | broad | unknown
     loyal_mono: bool     # heavy hours + a small library => near-single-game player
     review_timing: str   # early | veteran | mid
+    channel: str         # steam | key | free — how they acquired the game (a stake signal)
+    early_access: bool   # backed the game during early access
+    tenure: str          # recent | established | veteran — how long before the event they reviewed
 
 
 def _bin(value: float, cuts: tuple[float, ...], names: tuple[str, ...]) -> str:
@@ -100,10 +116,21 @@ def segment_record(r: UserRecord, bands: Bands) -> Segment:
     else:
         review_timing = "mid"
 
+    # How they got the game — a direct signal of financial stake, which is what
+    # a monetisation change (paid MTX, paid→free) actually acts on.
+    channel = "free" if r.received_for_free else "steam" if r.steam_purchase else "key"
+
+    # How long before the event they reviewed (review-time fact, not dump-time).
+    tenure_secs = max(0, bands.event_cutoff - r.timestamp)
+    tenure = _bin(tenure_secs, bands.tenure, ("recent", "established", "veteran"))
+
     return Segment(
         investment=investment,
         vocalness=vocalness,
         library=library,
         loyal_mono=loyal_mono,
         review_timing=review_timing,
+        channel=channel,
+        early_access=bool(r.early_access),
+        tenure=tenure,
     )
