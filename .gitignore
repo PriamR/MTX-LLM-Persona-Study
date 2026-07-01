@@ -25,6 +25,10 @@ out/*
 !data/.gitkeep
 !out/.gitkeep
 
+# Large local datasets — never publish (downloaded dumps, archives)
+Historical Data/
+*.zip
+
 # OS cruft
 .DS_Store
 Thumbs.db
