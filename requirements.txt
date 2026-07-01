@@ -1,0 +1,26 @@
+# HTTP + data wrangling
+httpx
+pandas
+duckdb
+
+# numerics / metrics
+numpy
+scipy
+
+# clustering + embeddings
+scikit-learn
+sentence-transformers
+
+# round-output sentiment scoring (local; optional for the 3-round smoke test)
+transformers
+
+# graph + opinion dynamics
+networkx
+
+# LLM clients — Together (smoke test) and OpenAI-compatible fallback
+together
+openai
+
+# config / env
+python-dotenv
+pyyaml

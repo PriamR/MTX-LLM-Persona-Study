@@ -4,12 +4,26 @@ context.md
 # Secrets / credentials
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 *.pfx
 secrets.*
 credentials.*
 *.token
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Data pulls & run outputs (regenerated, never committed)
+data/*
+out/*
+!data/.gitkeep
+!out/.gitkeep
 
 # OS cruft
 .DS_Store
