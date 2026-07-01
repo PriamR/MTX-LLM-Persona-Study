@@ -20,6 +20,9 @@ from llmsonas.config import TOGETHER_API_KEY
 
 URL = "https://api.together.xyz/v1/chat/completions"
 _TRANSIENT = (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError, httpx.RemoteProtocolError)
+# Serverless endpoints return these while overloaded / rate-limited; they are
+# transient, so retry rather than aborting a whole multi-hundred-call run.
+_RETRY_STATUS = {429, 500, 502, 503, 504}
 _client: httpx.Client | None = None
 
 
@@ -53,7 +56,7 @@ def _p_from_dist(dist: dict[str, float]) -> float | None:
 
 
 def answer_probability(
-    messages: list[dict], model: str, *, top_logprobs: int = 5, retries: int = 3
+    messages: list[dict], model: str, *, top_logprobs: int = 5, retries: int = 5
 ) -> float | None:
     """P(recommend) for one persona, or None if the option tokens never appear."""
     client = _get_client()
@@ -72,6 +75,10 @@ def answer_probability(
             logprobs = resp.json()["choices"][0].get("logprobs") or {}
             positions = logprobs.get("top_logprobs") or []
             return _p_from_dist(positions[0]) if positions else None
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in _RETRY_STATUS or attempt == retries - 1:
+                raise
+            time.sleep(1.5 * (attempt + 1))
         except _TRANSIENT:
             if attempt == retries - 1:
                 raise
