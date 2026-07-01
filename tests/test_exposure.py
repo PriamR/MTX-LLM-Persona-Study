@@ -18,6 +18,11 @@ EVENT = 1_600_000_000
 
 
 def _footprint(rows):
+    # rows: (steamid, appid, app_free_share[, voted_up])
+    if rows and len(rows[0]) == 4:
+        return pd.DataFrame(
+            rows, columns=["steamid", "appid", "app_free_share", "voted_up"]
+        )
     return pd.DataFrame(rows, columns=["steamid", "appid", "app_free_share"])
 
 
@@ -34,6 +39,8 @@ def test_bands_from_footprint():
     assert out["mix"].band == "mixed"
     assert out["f2p"].band == "f2p_leaning"
     assert "absent" not in out  # no-footprint users simply aren't in the dict
+    # A verdict-less footprint (pre-disposition cache shape) degrades gracefully.
+    assert out["prem"].disposition == "unknown"
 
 
 def test_key_heavy_paid_app_is_not_free_access():
@@ -41,6 +48,31 @@ def test_key_heavy_paid_app_is_not_free_access():
     # yet was a paid title; true F2P apps measure >= 0.93. The cut must separate.
     foot = _footprint([("u", 550, 0.59), ("u", 570, 1.00)])
     assert exposures(foot)["u"].band == "mixed"  # one paid + one free, not two free
+
+
+def test_disposition_bands_from_verdict_history():
+    foot = _footprint(
+        [
+            ("all", 1, 0.1, True), ("all", 2, 0.1, True),
+            ("most", 1, 0.1, True), ("most", 2, 0.1, True), ("most", 3, 0.1, False),
+            ("half", 1, 0.1, True), ("half", 2, 0.1, False),
+            ("few", 1, 0.1, False), ("few", 2, 0.1, False), ("few", 3, 0.1, True),
+        ]
+    )
+    out = exposures(foot)
+    assert out["all"].disposition == "all"
+    assert out["most"].disposition == "most"
+    assert out["half"].disposition == "half"
+    assert out["few"].disposition == "few"
+    clause = exposure_clause(out["few"])
+    assert clause is not None and clause.endswith("They recommended few of them.")
+
+
+def test_singular_footprint_disposition_wording():
+    up = exposures(_footprint([("u", 570, 1.0, True)]))["u"]
+    down = exposures(_footprint([("u", 570, 1.0, False)]))["u"]
+    assert exposure_clause(up).endswith("They recommended it.")
+    assert exposure_clause(down).endswith("They did not recommend it.")
 
 
 def test_clause_wording_by_band():

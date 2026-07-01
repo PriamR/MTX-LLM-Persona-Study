@@ -177,14 +177,22 @@ def _print_persona_mix(records, idx, bands, bios, expo) -> None:
     exp = Counter(_expo_band(expo, records[i].steamid) for i in idx)
     exp_s = " ".join(f"{k}:{exp[k]}" for k in
                      ("none", "premium", "mixed", "f2p_leaning") if exp[k])
+    disp = Counter(_expo_disposition(expo, records[i].steamid) for i in idx)
+    disp_s = " ".join(f"{k}:{disp[k]}" for k in
+                      ("none", "all", "most", "half", "few", "unknown") if disp[k])
     print(f"[mix]   investment [{inv_s}] | vocalness [{voc_s}] | loyal-single-game: {mono}")
-    print(f"[mix]   monetization exposure [{exp_s}]")
+    print(f"[mix]   monetization exposure [{exp_s}] | other-game verdicts [{disp_s}]")
     print(f"[bio]   e.g. {bios[0]}")
 
 
 def _expo_band(expo, steamid: str) -> str:
     e = expo.get(steamid)
     return e.band if e is not None else "none"
+
+
+def _expo_disposition(expo, steamid: str) -> str:
+    e = expo.get(steamid)
+    return e.disposition if e is not None else "none"
 
 
 def _print_gap_report(gaps: list[dict], records, idx, expo) -> None:
@@ -201,12 +209,17 @@ def _print_gap_report(gaps: list[dict], records, idx, expo) -> None:
     print(f"  overall: median {np.median(arr):+.2f} | min {arr.min():+.2f} | "
           f"max {arr.max():+.2f} | std {arr.std():.2f}")
     by_band: dict[str, list[float]] = {}
+    by_disp: dict[str, list[float]] = {}
     for d, i in zip(deltas, idx):
         if d is not None:
             by_band.setdefault(_expo_band(expo, records[i].steamid), []).append(d)
+            by_disp.setdefault(_expo_disposition(expo, records[i].steamid), []).append(d)
     parts = [f"{band}: {np.mean(v):+.2f} (n={len(v)})"
              for band, v in sorted(by_band.items())]
     print(f"  mean by exposure band: {' | '.join(parts)}")
+    parts = [f"{band}: {np.mean(v):+.2f} (n={len(v)})"
+             for band, v in sorted(by_disp.items())]
+    print(f"  mean by other-game verdicts: {' | '.join(parts)}")
 
 
 def run_dump_smoke(case: DumpCase) -> None:
@@ -243,7 +256,25 @@ def run_dump_smoke(case: DumpCase) -> None:
     print(f"real swing ({direction}): pre-event recommend {pre_ratio:.3f} (n={pre_n})  ->  "
           f"post-{case.gt_window_days}d {gt:.3f} (n={gt_n})  |  ground truth = {gt:.3f}")
     print(f"  note: {100 * post['edited'].mean():.0f}% of that window was edited after "
-          f"posting; never-edited post ratio = {gt_clean:.3f} (n={len(clean)})\n")
+          f"posting; never-edited post ratio = {gt_clean:.3f} (n={len(clean)})")
+
+    # Estimand note. Steam allows one review per user per app, so every review
+    # *created* in the window is a first-time reviewer of this game — the scored
+    # GT is the vocal reaction FLOW, not a poll of the panel the personas are
+    # built from. The nearest observable panel signal is pre-event reviews
+    # *edited* inside the window (self-selected, current stored stance); the two
+    # bracket the honest target.
+    panel = df[(df["ts"] < cut) & (df["timestamp_updated"] >= cut)
+               & (df["timestamp_updated"] < cut + case.gt_window_days * 86400)]
+    if len(panel):
+        panel_p = float(panel["voted_up"].mean())
+        print(f"  estimand: window reviews are all first-time reviewers (flow GT); "
+              f"pre-event reviewers who edited in-window: {panel_p:.3f} (n={len(panel)}, "
+              f"self-selected) -> target bracket [{min(panel_p, gt):.3f}, {max(panel_p, gt):.3f}]")
+    else:
+        print("  estimand: window reviews are all first-time reviewers (flow GT); "
+              "no in-window edits by pre-event reviewers to bracket against")
+    print()
 
     pre = df[(df["ts"] < cut) & (df["language"] == "english")]
     pool = pre.sample(n=min(case.pool, len(pre)), random_state=case.seed)

@@ -46,11 +46,17 @@ BAND_CUTS = (1 / 3, 2 / 3)  # premium | mixed | f2p_leaning thirds
 
 @dataclass(frozen=True)
 class Exposure:
-    """One user's pre-event cross-app monetization exposure."""
+    """One user's pre-event cross-app monetization exposure and disposition."""
 
     n_other: int          # pre-cutoff reviews on candidate apps
     f2p_share: float      # share of those on free-access apps (nan when none)
     band: str             # none | premium | mixed | f2p_leaning
+    # Dispositional positivity: how the user judged their OTHER games pre-event.
+    # Cross-game behavioural history (Method-Technical §A.3 mean(voted_up)), not
+    # the withheld verdict on the target game — it licenses *disposition*, the
+    # axis that lets a persona plausibly stay positive under a change.
+    rec_share: float = float("nan")   # share of footprint reviews that recommend
+    disposition: str = "unknown"      # all | most | half | few | unknown
 
 
 def candidate_apps(
@@ -101,39 +107,61 @@ def build_footprint(
 
     cache = _footprint_cache(target_appid, cutoff)
     if cache.exists() and not force:
-        return duckdb.sql(f"SELECT * FROM read_parquet('{cache.as_posix()}')").df()
+        cached = duckdb.sql(f"SELECT * FROM read_parquet('{cache.as_posix()}')").df()
+        if "voted_up" in cached.columns:
+            return cached
+        # cache predates the disposition marker — fall through and rebuild
+
+    def _true(s: pd.Series) -> pd.Series:
+        return s.astype(str).str.lower().isin(("true", "1", "t"))
 
     with zipfile.ZipFile(zip_path) as zf:
         with zf.open(HD2_MEMBER.format(appid=target_appid)) as fh:
             target = pd.read_csv(fh, usecols=["author_steamid", "timestamp_created"])
         ids = set(target.loc[target["timestamp_created"] < cutoff, "author_steamid"])
 
-        rows: list[tuple[str, int, float]] = []
+        rows: list[tuple[str, int, float, bool]] = []
         for appid in candidate_apps(zip_path, k=k, exclude=target_appid):
             with zf.open(HD2_MEMBER.format(appid=appid)) as fh:
                 df = pd.read_csv(
-                    fh, usecols=["author_steamid", "timestamp_created", "steam_purchase"]
+                    fh,
+                    usecols=[
+                        "author_steamid", "timestamp_created", "steam_purchase", "voted_up",
+                    ],
                 )
             df = df[df["timestamp_created"] < cutoff]
             if not len(df):
                 continue
-            free_share = float(
-                (~df["steam_purchase"].astype(str).str.lower().isin(("true", "1", "t"))).mean()
-            )
-            for sid in df.loc[df["author_steamid"].isin(ids), "author_steamid"]:
-                rows.append((str(sid), appid, free_share))
+            free_share = float((~_true(df["steam_purchase"])).mean())
+            hit = df[df["author_steamid"].isin(ids)]
+            for sid, up in zip(hit["author_steamid"], _true(hit["voted_up"])):
+                rows.append((str(sid), appid, free_share, bool(up)))
 
-    foot = pd.DataFrame(rows, columns=["steamid", "appid", "app_free_share"])
+    foot = pd.DataFrame(rows, columns=["steamid", "appid", "app_free_share", "voted_up"])
     cache.parent.mkdir(parents=True, exist_ok=True)
     duckdb.sql(f"COPY (SELECT * FROM foot) TO '{cache.as_posix()}' (FORMAT parquet)")
     return foot
 
 
+def _disposition(rec_share: float) -> str:
+    """Mechanical cuts, frozen: all (=1), most (>=2/3), half (>1/3), few."""
+    if rec_share != rec_share:  # NaN — footprint lacks verdicts (old cache/tests)
+        return "unknown"
+    if rec_share >= 1.0:
+        return "all"
+    if rec_share >= 2 / 3:
+        return "most"
+    if rec_share > 1 / 3:
+        return "half"
+    return "few"
+
+
 def exposures(footprint: pd.DataFrame) -> dict[str, Exposure]:
     """Per-user exposure bands from a footprint frame (steamid -> Exposure).
 
-    Band cuts are fixed thirds of the free-access share — mechanical, identical
-    across cases, frozen before any answer is seen.
+    Band cuts are fixed thirds of the free-access share, disposition cuts fixed
+    fractions of the cross-app recommend share — mechanical, identical across
+    cases, frozen before any answer is seen.
     """
     out: dict[str, Exposure] = {}
     if not len(footprint):
@@ -141,22 +169,37 @@ def exposures(footprint: pd.DataFrame) -> dict[str, Exposure]:
     flagged = footprint.assign(
         is_free=footprint["app_free_share"] >= FREE_ACCESS_CUT
     )
-    grouped = flagged.groupby("steamid").agg(
-        n_other=("appid", "count"), n_free=("is_free", "sum")
-    )
+    has_verdicts = "voted_up" in footprint.columns
+    aggs = dict(n_other=("appid", "count"), n_free=("is_free", "sum"))
+    if has_verdicts:
+        aggs["rec_share"] = ("voted_up", "mean")
+    grouped = flagged.groupby("steamid").agg(**aggs)
     lo, hi = BAND_CUTS
     for sid, row in grouped.iterrows():
         share = row.n_free / row.n_other
         band = "premium" if share < lo else "mixed" if share <= hi else "f2p_leaning"
-        out[str(sid)] = Exposure(int(row.n_other), float(share), band)
+        rec = float(row.rec_share) if has_verdicts else float("nan")
+        out[str(sid)] = Exposure(
+            int(row.n_other), float(share), band, rec, _disposition(rec)
+        )
     return out
 
 
+_DISPOSITION_PLURAL = {
+    "all": " They recommended all of them.",
+    "most": " They recommended most of them.",
+    "half": " They recommended about half of them.",
+    "few": " They recommended few of them.",
+}
+
+
 def exposure_clause(exp: Exposure | None) -> str | None:
-    """The bio sentence for one user's exposure band — facts only, no valence.
+    """The bio sentences for one user's exposure + disposition — facts only.
 
     ``None`` (no footprint) renders nothing: we state what the record shows and
     stay silent where it shows nothing, exactly like the unknown-library band.
+    The disposition sentence is the user's own cross-game verdict history —
+    behavioural fact, not the withheld target verdict.
     """
     if exp is None or exp.band == "none" or exp.n_other == 0:
         return None
@@ -166,10 +209,17 @@ def exposure_clause(exp: Exposure | None) -> str | None:
             if exp.band == "f2p_leaning"
             else "a paid, buy-upfront title"
         )
-        return f"The one other popular game they had reviewed before this is {kind}."
+        base = f"The one other popular game they had reviewed before this is {kind}."
+        if exp.disposition == "all":
+            return base + " They recommended it."
+        if exp.disposition == "few":
+            return base + " They did not recommend it."
+        return base
     lead = f"Of the {exp.n_other} other popular games they had reviewed before this, "
     if exp.band == "premium":
-        return lead + "all are paid, buy-upfront titles."
-    if exp.band == "mixed":
-        return lead + "some are free-to-play titles that sell in-game items."
-    return lead + "most are free-to-play titles that sell in-game items."
+        base = lead + "all are paid, buy-upfront titles."
+    elif exp.band == "mixed":
+        base = lead + "some are free-to-play titles that sell in-game items."
+    else:
+        base = lead + "most are free-to-play titles that sell in-game items."
+    return base + _DISPOSITION_PLURAL.get(exp.disposition, "")
