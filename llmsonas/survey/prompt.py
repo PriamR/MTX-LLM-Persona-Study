@@ -8,20 +8,23 @@ from __future__ import annotations
 SYSTEM = (
     "You simulate how one specific Steam player would answer a survey question "
     "about a game, judging only from the described player history. Reply with a "
-    "single letter and nothing else."
+    "single {unit} and nothing else."
 )
+
+
+def _unit(labels: dict[str, str]) -> str:
+    # "letter" only describes single-character keys; a word-token variant
+    # (e.g. Yes/No) keeps the identical wording otherwise.
+    return "letter" if all(len(k) == 1 for k in labels) else "word"
 
 
 def _question_block(question: str, labels: dict[str, str]) -> str:
     options = "\n".join(f"{k}) {v}" for k, v in labels.items())
     letters = " or ".join(labels)
-    # "single letter" only describes single-character keys; a word-token variant
-    # (e.g. Yes/No) keeps the identical block otherwise.
-    unit = "the single letter" if all(len(k) == 1 for k in labels) else "the single word"
     return (
         f"Question: {question}\n"
         f"Answer options:\n{options}\n\n"
-        f"Answer with just {unit} {letters}."
+        f"Answer with just the single {_unit(labels)} {letters}."
     )
 
 
@@ -31,13 +34,14 @@ def grounded_messages(bio: str, question: str, labels: dict[str, str]) -> list[d
         f"{bio}\n\n{_question_block(question, labels)}\n"
         "Base the answer only on this player's history."
     )
-    return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
+    system = SYSTEM.format(unit=_unit(labels))
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def naive_messages(descriptor: str, question: str, labels: dict[str, str]) -> list[dict]:
     """M1 control — a generic descriptor, no behavioural grounding."""
     user = f"Consider {descriptor}.\n\n{_question_block(question, labels)}"
-    return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": SYSTEM.format(unit=_unit(labels))}, {"role": "user", "content": user}]
 
 
 # M2-freq rung: instead of a binary verdict, ask for the conditional rate the
@@ -80,4 +84,5 @@ def contagion_messages(
     parts.append(neighbour_summary)
     parts.append(_question_block(question, labels))
     parts.append("Weigh this player's own history against what similar players are saying.")
-    return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n\n".join(parts)}]
+    system = SYSTEM.format(unit=_unit(labels))
+    return [{"role": "system", "content": system}, {"role": "user", "content": "\n\n".join(parts)}]
