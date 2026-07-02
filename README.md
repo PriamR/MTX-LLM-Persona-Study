@@ -19,9 +19,10 @@ post-event recommend range on most of them, including one event that happened
 after the model's training cutoff (so it cannot have been memorised). The method
 predicts calm when the real reaction is calm and a collapse when it collapses,
 rather than always leaning negative. It is not perfect: the failure modes are
-measured and reported, not hidden. The main one is a level problem, where the
-model orders personas correctly but reads almost all of them below the real rate,
-which we probe with a set of labelled control runs.
+measured and reported, not hidden. The main one is a level problem: the model
+orders personas correctly, but the overall level follows the model's own reading
+of the change, sometimes too harsh and sometimes too forgiving, which we probe
+with a set of labelled control runs.
 
 ## Layout
 
