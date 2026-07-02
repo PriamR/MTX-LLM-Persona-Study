@@ -142,6 +142,25 @@ HELLDIVERS2 = DumpCase(
     note="CONTRAST ONLY: dump post-dates Sony's reversal (~58% edited), so the measured swing washes out.",
 )
 
+ARK = DumpCase(
+    key="ark",
+    title="ARK: Survival Evolved — Scorched Earth paid expansion (2016-09-01)",
+    appid=346110,
+    event_cutoff=1472688000,   # 2016-09-01 00:00 UTC (Scorched Earth release)
+    # Facts only: a paid expansion released while the base game was still in
+    # Early Access. No characterization of whether that was appropriate — the
+    # split (backers who feel owed a finished base game vs players happy for
+    # more content) must come from the personas.
+    change=(
+        "The developer has released a paid expansion pack that adds a new "
+        "desert map, creatures and items, while the base game is still in "
+        "Early Access."
+    ),
+    note="split axis: early-access backers vs later buyers; investment. Same "
+         "paid-content decision class as Payday 2/TW3. Screened 2026-07-02: "
+         "0.741 -> 0.309 (7d), bracket [0.249, 0.309].",
+)
+
 CSGO = DumpCase(
     key="csgo",
     title="CS:GO paid -> free-to-play (2018-12-06)",
@@ -156,7 +175,7 @@ CSGO = DumpCase(
          "the enriched personas still collapse the way the anchoring finding predicts.",
 )
 
-CASES = {c.key: c for c in (PAYDAY2, TOTALWAR3, NOMANSSKY, HELLDIVERS2, CSGO)}
+CASES = {c.key: c for c in (PAYDAY2, TOTALWAR3, NOMANSSKY, HELLDIVERS2, ARK, CSGO)}
 
 
 def _offline_backend(messages: list[dict], model: str) -> float:
