@@ -164,6 +164,58 @@ TEKKEN8 = DumpCase(
     gt_window_days=45,
 )
 
+ELITE = DumpCase(
+    key="elite",
+    title="Elite Dangerous — ARX in-game store (2019-09-18)",
+    appid=359320,
+    event_cutoff=1568764800,   # 2019-09-18 00:00 UTC (September Update / ARX)
+    # Facts only: the cosmetics store moved in-game with a dual-earn currency;
+    # items stayed cosmetic. This is the "forgiving" variant of the decision —
+    # the case screens as a grumble (0.721 -> 0.616), not a bomb, so it tests
+    # whether the method predicts CALM when calm is the answer.
+    change=(
+        "The developer has replaced the game's external cosmetics store with "
+        "an in-game store whose currency can be bought with real money or "
+        "earned in small amounts through play. The items are cosmetic only."
+    ),
+    note="third pillar: the IN-SCOPE CALM CASE — premium game adds MTX in the "
+         "cosmetic-only + earnable form and the real reaction is mild. Screened "
+         "2026-07-02: 0.721 -> 0.616 (7d), panel edits ~0.70.",
+)
+
+WARTHUNDER = DumpCase(
+    key="warthunder",
+    title="War Thunder — economy changes announcement (2023-05-14)",
+    appid=236390,
+    event_cutoff=1684022400,   # 2023-05-14 00:00 UTC (economy devblog)
+    change=(
+        "The developer has announced changes to the game's economy that "
+        "increase in-game repair costs and reduce the rewards earned from "
+        "battles."
+    ),
+    note="UMBRELLA TIER (not premium): a free-to-play game tightening its "
+         "recurrent monetization. Partially walked back weeks later (roadmap "
+         "mid-June) — the 7d window predates the reversal. Screened "
+         "2026-07-02: 0.772 -> 0.164 (7d), panel edits 0.058 (n=3088).",
+)
+
+RUNESCAPE = DumpCase(
+    key="runescape",
+    title="RuneScape — Hero Pass battle pass (2023-09-04)",
+    appid=1343400,
+    event_cutoff=1693785600,   # 2023-09-04 00:00 UTC (Hero Pass launch)
+    change=(
+        "The developer has added a battle pass with a paid premium track whose "
+        "rewards include items that affect gameplay, on top of the game's "
+        "existing subscription and store."
+    ),
+    note="UMBRELLA TIER (not premium): a subscription/F2P hybrid expanding "
+         "recurrent monetization with a pay-to-win battle pass. Walked back "
+         "within ~a week — the 7d window is the pre-reversal reaction, and the "
+         "30d recovery (0.081 -> 0.218) shows the walkback working. Screened "
+         "2026-07-02: 0.861 -> 0.081 (7d), panel edits 0.079 (n=151).",
+)
+
 ARK = DumpCase(
     key="ark",
     title="ARK: Survival Evolved — Scorched Earth paid expansion (2016-09-01)",
@@ -197,7 +249,11 @@ CSGO = DumpCase(
          "the enriched personas still collapse the way the anchoring finding predicts.",
 )
 
-CASES = {c.key: c for c in (PAYDAY2, TEKKEN8, TOTALWAR3, NOMANSSKY, HELLDIVERS2, ARK, CSGO)}
+CASES = {c.key: c for c in (
+    PAYDAY2, TEKKEN8, ELITE,                 # pillars: premium game adds MTX
+    WARTHUNDER, RUNESCAPE,                   # umbrella: expanding recurrent monetization
+    TOTALWAR3, NOMANSSKY, HELLDIVERS2, ARK, CSGO,  # contrasts / controls / out-of-scope
+)}
 
 
 def _offline_backend(messages: list[dict], model: str) -> float:
