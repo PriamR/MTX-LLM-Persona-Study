@@ -45,7 +45,7 @@ tests/
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # source .venv/bin/activate on macOS/Linux
-pip install -r requirements.txt
+pip install -e .                # installs llmsonas plus everything in requirements.txt
 
 copy .env.example .env          # then put your Together key in .env
 ```

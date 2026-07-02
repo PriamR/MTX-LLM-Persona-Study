@@ -17,6 +17,9 @@ transformers
 # graph + opinion dynamics
 networkx
 
+# report figures
+matplotlib
+
 # LLM clients — Together (smoke test) and OpenAI-compatible fallback
 together
 openai
