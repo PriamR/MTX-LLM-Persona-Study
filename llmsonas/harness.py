@@ -31,6 +31,17 @@ class MethodResult:
     weights: np.ndarray
 
 
+def recommend_key(labels: dict[str, str]) -> str:
+    """The option key that means "recommend" — the value that is exactly
+    "Recommend" (so the A/B label swap needs no extra config), else the first
+    key (the historical A=Recommend layout). Variants with other wordings
+    (e.g. Yes/No) pass the key explicitly instead."""
+    for k, v in labels.items():
+        if v.strip().lower() == "recommend":
+            return k
+    return next(iter(labels))
+
+
 def survey(
     items: list[str],
     model: str,
@@ -40,16 +51,23 @@ def survey(
     grounded: bool,
     fallback: float = 0.5,
     backend: Backend | None = None,
+    recommend: str | None = None,
 ) -> np.ndarray:
     """Query each persona; return per-persona P(recommend).
 
     ``backend`` defaults to the Together client (imported lazily so an offline
-    wiring run needn't have the HTTP client installed).
+    wiring run needn't have the HTTP client installed). Which option token
+    counts as "recommend" follows ``labels`` (see ``recommend_key``) unless
+    ``recommend`` overrides it.
     """
     if backend is None:
         from llmsonas.survey.together_client import answer_probability
 
-        backend = answer_probability
+        options = tuple(labels)
+        rec = recommend or recommend_key(labels)
+
+        def backend(msgs: list[dict], mdl: str) -> float | None:
+            return answer_probability(msgs, mdl, options=options, recommend=rec)
     build = grounded_messages if grounded else naive_messages
     out = []
     for item in items:

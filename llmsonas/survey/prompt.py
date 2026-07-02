@@ -15,10 +15,13 @@ SYSTEM = (
 def _question_block(question: str, labels: dict[str, str]) -> str:
     options = "\n".join(f"{k}) {v}" for k, v in labels.items())
     letters = " or ".join(labels)
+    # "single letter" only describes single-character keys; a word-token variant
+    # (e.g. Yes/No) keeps the identical block otherwise.
+    unit = "the single letter" if all(len(k) == 1 for k in labels) else "the single word"
     return (
         f"Question: {question}\n"
         f"Answer options:\n{options}\n\n"
-        f"Answer with just the single letter {letters}."
+        f"Answer with just {unit} {letters}."
     )
 
 
@@ -35,6 +38,31 @@ def naive_messages(descriptor: str, question: str, labels: dict[str, str]) -> li
     """M1 control — a generic descriptor, no behavioural grounding."""
     user = f"Consider {descriptor}.\n\n{_question_block(question, labels)}"
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
+
+
+# M2-freq rung: instead of a binary verdict, ask for the conditional rate the
+# scored metric actually needs. One fixed neutral wording for every case — the
+# decision still lives in the persona's situation, never in the question.
+FREQ_QUESTION = (
+    "Out of 100 players with this player's history, how many would recommend "
+    "the game to other players after this change? Answer with a number from 0 "
+    "to 100."
+)
+
+FREQ_SYSTEM = (
+    "You estimate how specific Steam players would answer a survey question "
+    "about a game, judging only from the described player history. Reply with "
+    "a single whole number and nothing else."
+)
+
+
+def frequency_messages(bio: str, question: str = FREQ_QUESTION) -> list[dict]:
+    """M2-freq — same grounded bio, frequency elicitation instead of A/B."""
+    user = (
+        f"{bio}\n\nQuestion: {question}\n"
+        "Base the answer only on this player's history."
+    )
+    return [{"role": "system", "content": FREQ_SYSTEM}, {"role": "user", "content": user}]
 
 
 def contagion_messages(

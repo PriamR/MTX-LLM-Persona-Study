@@ -31,20 +31,25 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
+from llmsonas.config import ROOT
 from llmsonas.construction.exposure import build_footprint, exposures
 from llmsonas.construction.profile import m1_profile, situation_bio
-from llmsonas.construction.segment import population_bands, segment_record
+from llmsonas.construction.segment import Bands, population_bands, segment_record
 from llmsonas.construction.select import cluster_archetypes, stratified_sample
 from llmsonas.data.dump import load_hd2, recommend_ratio, to_user_records
 from llmsonas.features.build import numeric_features
 from llmsonas.graph.build import build_influence_matrix
 from llmsonas.graph.fj import friedkin_johnsen
 from llmsonas.graph.nullcheck import homophily_nullcheck
-from llmsonas.harness import MethodResult, score, survey
+from llmsonas.harness import MethodResult, recommend_key, score, survey
+
+OUT_DIR = ROOT / "out"
 
 MODEL = "meta-llama/Meta-Llama-3-8B-Instruct-Lite"
 
@@ -195,17 +200,21 @@ def _expo_disposition(expo, steamid: str) -> str:
     return e.disposition if e is not None else "none"
 
 
-def _print_gap_report(gaps: list[dict], records, idx, expo) -> None:
-    """The un-softmaxed A−B logit gap per persona: whether the features moved the
-    model at all is visible here even when every P saturates to the same pole."""
+def _print_gap_report(
+    gaps: list[dict], records, idx, expo,
+    options: tuple[str, str] = ("A", "B"), recommend: str = "A",
+) -> None:
+    """The un-softmaxed recommend−other logit gap per persona: whether the
+    features moved the model at all is visible here even when every P saturates
+    to the same pole."""
     from llmsonas.survey.together_client import logit_gap
 
-    deltas = [logit_gap(lp) for lp in gaps]
+    deltas = [logit_gap(lp, options, recommend) for lp in gaps]
     known = [d for d in deltas if d is not None]
     if not known:
         return
     arr = np.asarray(known)
-    print(f"\nraw option-logit gap Δ = logprob(A) − logprob(B), M2a personas:")
+    print(f"\nraw option-logit gap Δ = logprob(recommend) − logprob(not recommend), M2a personas:")
     print(f"  overall: median {np.median(arr):+.2f} | min {arr.min():+.2f} | "
           f"max {arr.max():+.2f} | std {arr.std():.2f}")
     by_band: dict[str, list[float]] = {}
@@ -220,6 +229,105 @@ def _print_gap_report(gaps: list[dict], records, idx, expo) -> None:
     parts = [f"{band}: {np.mean(v):+.2f} (n={len(v)})"
              for band, v in sorted(by_disp.items())]
     print(f"  mean by other-game verdicts: {' | '.join(parts)}")
+
+
+def delta_csv_path(case: DumpCase, tag: str = "") -> Path:
+    """Where a run's per-persona Δ dump lands (git-ignored ``out/``)."""
+    model_tag = case.model.rsplit("/", 1)[-1]
+    suffix = f"_{tag}" if tag else ""
+    return OUT_DIR / f"deltas_{case.key}_{model_tag}{suffix}_{time.strftime('%Y-%m-%d')}.csv"
+
+
+def dump_deltas(
+    path: Path,
+    gaps: list[dict],
+    P,
+    records,
+    idx,
+    weights,
+    expo,
+    bands: Bands,
+    options: tuple[str, str] = ("A", "B"),
+    recommend: str = "A",
+) -> Path:
+    """Write the per-persona raw readout to CSV.
+
+    The printed report only summarises; the cross-case Δ→P calibration fit and
+    the answer-format controls need the raw per-persona values, joinable across
+    runs on the (rank, steamid) key since the sample is seed-deterministic.
+    """
+    import pandas as pd
+
+    from llmsonas.survey.together_client import logit_gap
+
+    other = next(o for o in options if o != recommend)
+    rows = []
+    for rank, (i, lp) in enumerate(zip(idx, gaps), 1):
+        r = records[i]
+        seg = segment_record(r, bands)
+        e = expo.get(r.steamid)
+        rows.append({
+            "rank": rank,
+            "steamid": r.steamid,
+            "weight": float(weights[rank - 1]),
+            "p": float(P[rank - 1]),
+            "delta": logit_gap(lp, options, recommend),
+            "lp_recommend": lp.get(recommend),
+            "lp_other": lp.get(other),
+            "investment": seg.investment,
+            "vocalness": seg.vocalness,
+            "channel": seg.channel,
+            "tenure": seg.tenure,
+            "expo_band": e.band if e is not None else "none",
+            "disposition": e.disposition if e is not None else "none",
+        })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+@dataclass
+class PersonaPanel:
+    """The M2a persona sample for a case, rebuilt deterministically outside
+    ``run_dump_smoke`` so control/diagnostic scripts survey the same people the
+    scored run does (same pool sample, same stratified draw, same bios)."""
+
+    records: list
+    bands: Bands
+    expo: dict
+    idx: list[int]
+    weights: np.ndarray
+    bios: list[str]
+    pre_ratio: float
+    pre_n: int
+    gt: float                 # flow GT (window review ratio)
+    gt_n: int
+    panel_p: float            # bracket's panel end (nan when no in-window edits)
+    panel_n: int
+
+
+def build_m2a_panel(case: DumpCase) -> PersonaPanel:
+    """Rebuild the case's M2a persona sample and both bracket ends."""
+    cut = case.event_cutoff
+    df = load_hd2(case.appid)
+    pre_ratio, pre_n = recommend_ratio(df, None, cut)
+    gt, gt_n = recommend_ratio(df, cut, cut + case.gt_window_days * 86400)
+    panel = df[(df["ts"] < cut) & (df["timestamp_updated"] >= cut)
+               & (df["timestamp_updated"] < cut + case.gt_window_days * 86400)]
+    panel_p = float(panel["voted_up"].mean()) if len(panel) else float("nan")
+    pre = df[(df["ts"] < cut) & (df["language"] == "english")]
+    pool = pre.sample(n=min(case.pool, len(pre)), random_state=case.seed)
+    records = to_user_records(pool, require_review=False)
+    bands = population_bands(records, cut)
+    expo = exposures(build_footprint(case.appid, cut))
+    idx, weights = stratified_sample(records, case.n_personas, seed=case.seed)
+    bios = [situation_bio(records[i], case.change, bands, expo.get(records[i].steamid))
+            for i in idx]
+    return PersonaPanel(
+        records=records, bands=bands, expo=expo, idx=idx, weights=weights,
+        bios=bios, pre_ratio=pre_ratio, pre_n=pre_n, gt=gt, gt_n=gt_n,
+        panel_p=panel_p, panel_n=len(panel),
+    )
 
 
 def run_dump_smoke(case: DumpCase) -> None:
@@ -299,13 +407,16 @@ def run_dump_smoke(case: DumpCase) -> None:
               for i in a_idx]
     _print_persona_mix(records, a_idx, bands, bios_a, expo)
     # Collect the raw option logprobs for M2a so the report can show the logit
-    # gaps a saturated P hides (only the real client can supply them).
+    # gaps a saturated P hides (only the real client can supply them). Which
+    # letter means "recommend" follows the case's answer_labels, so the
+    # label-swap control is a config change, not a fork.
     gaps_a: list[dict] = []
+    opts, rec = tuple(LABELS), recommend_key(LABELS)
     if backend is None:
         from llmsonas.survey.together_client import answer_probability
 
         def m2a_backend(msgs: list[dict], mdl: str) -> float | None:
-            return answer_probability(msgs, mdl, detail=gaps_a)
+            return answer_probability(msgs, mdl, options=opts, recommend=rec, detail=gaps_a)
     else:
         m2a_backend = backend
     Pa = survey(bios_a, MODEL_ID, Q, LABELS, grounded=True, backend=m2a_backend)
@@ -356,7 +467,10 @@ def run_dump_smoke(case: DumpCase) -> None:
     print(f"  simulation reads as: {read} [M2a spread={res_a.spread:.3f}]")
 
     if gaps_a:
-        _print_gap_report(gaps_a, records, a_idx, expo)
+        _print_gap_report(gaps_a, records, a_idx, expo, opts, rec)
+        path = dump_deltas(delta_csv_path(case), gaps_a, Pa, records, a_idx, a_w,
+                           expo, bands, opts, rec)
+        print(f"  per-persona Δ dump -> {path}")
 
     print("\nhomophily null-shuffle check (M3 graph):")
     print(f"  Moran's I = {null.observed:+.4f} | null mean = {null.null_mean:+.4f} | "

@@ -38,31 +38,56 @@ def _get_client() -> httpx.Client:
     return _client
 
 
-def _option_logprobs(dist: dict[str, float]) -> dict[str, float]:
-    """Raw logprobs of the option tokens A/B found in one position's dist."""
+# Which token means "recommend" is a run configuration, not a constant: the
+# label-swap control (A=Not recommend / B=Recommend) and the Yes/No variant
+# must be a different ``options``/``recommend`` pair, never a forked parser.
+OPTIONS = ("A", "B")
+
+
+def _other(options: tuple[str, str], recommend: str) -> str:
+    if recommend not in options:
+        raise ValueError(f"recommend={recommend!r} not in options {options}")
+    return options[1] if options[0] == recommend else options[0]
+
+
+def _option_logprobs(
+    dist: dict[str, float], options: tuple[str, str] = OPTIONS
+) -> dict[str, float]:
+    """Raw logprobs of the option tokens found in one position's dist, keyed by
+    the canonical option strings (token matching is whitespace/case-insensitive)."""
+    wanted = {o.strip().upper(): o for o in options}
     lp: dict[str, float] = {}
     for token, logprob in dist.items():
         if logprob is None:
             continue
         label = token.strip().upper()
-        if label in ("A", "B") and label not in lp:
-            lp[label] = logprob
+        if label in wanted and wanted[label] not in lp:
+            lp[wanted[label]] = logprob
     return lp
 
 
-def _p_from_dist(dist: dict[str, float]) -> float | None:
-    """Softmax P(A=Recommend) over the option tokens A/B in one position's dist."""
-    lp = _option_logprobs(dist)
+def _p_from_dist(
+    dist: dict[str, float],
+    options: tuple[str, str] = OPTIONS,
+    recommend: str = "A",
+) -> float | None:
+    """Softmax P(recommend) over the two option tokens in one position's dist."""
+    lp = _option_logprobs(dist, options)
     if not lp:
         return None
     floor = min(lp.values()) - 10.0
-    a, b = lp.get("A", floor), lp.get("B", floor)
+    a = lp.get(recommend, floor)
+    b = lp.get(_other(options, recommend), floor)
     ea, eb = math.exp(a), math.exp(b)
     return ea / (ea + eb)
 
 
-def logit_gap(lp: dict[str, float]) -> float | None:
-    """logprob(A) − logprob(B) with the same floor as ``_p_from_dist``.
+def logit_gap(
+    lp: dict[str, float],
+    options: tuple[str, str] = OPTIONS,
+    recommend: str = "A",
+) -> float | None:
+    """logprob(recommend) − logprob(the other option), same floor as ``_p_from_dist``.
 
     The per-persona signal a saturated P hides: at P≈0 every persona rounds to
     the same number, but the raw gap still shows whether the features moved the
@@ -71,13 +96,15 @@ def logit_gap(lp: dict[str, float]) -> float | None:
     if not lp:
         return None
     floor = min(lp.values()) - 10.0
-    return lp.get("A", floor) - lp.get("B", floor)
+    return lp.get(recommend, floor) - lp.get(_other(options, recommend), floor)
 
 
 def answer_probability(
     messages: list[dict],
     model: str,
     *,
+    options: tuple[str, str] = OPTIONS,
+    recommend: str = "A",
     top_logprobs: int = 5,
     retries: int = 5,
     detail: list[dict[str, float]] | None = None,
@@ -104,8 +131,8 @@ def answer_probability(
             positions = logprobs.get("top_logprobs") or []
             dist = positions[0] if positions else {}
             if detail is not None:
-                detail.append(_option_logprobs(dist))
-            return _p_from_dist(dist) if dist else None
+                detail.append(_option_logprobs(dist, options))
+            return _p_from_dist(dist, options, recommend) if dist else None
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in _RETRY_STATUS or attempt == retries - 1:
                 raise
@@ -115,3 +142,36 @@ def answer_probability(
                 raise
             time.sleep(1.5 * (attempt + 1))
     return None
+
+
+def completion_text(
+    messages: list[dict],
+    model: str,
+    *,
+    max_tokens: int = 8,
+    retries: int = 5,
+) -> str:
+    """A short temperature-0 generation, for elicitations whose answer is not a
+    single option token (e.g. a 0–100 frequency, which is multi-token — option
+    logprobs don't apply). Same retry policy as the logprob path."""
+    client = _get_client()
+    body = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.0,
+    }
+    for attempt in range(retries):
+        try:
+            resp = client.post(URL, json=body)
+            resp.raise_for_status()
+            return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in _RETRY_STATUS or attempt == retries - 1:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+        except _TRANSIENT:
+            if attempt == retries - 1:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+    return ""
