@@ -1,57 +1,69 @@
 # Steam-LLMSonas
 
-Modelling a group of Steam players with LLM personas, and testing which
-persona-construction methods best reproduce the group's real opinions on a
-consequential decision.
+LLM persona panels built from real Steam reviewers, used to predict how a game's
+players react to a monetization change before it happens.
 
-Evaluation is grounded in observed behaviour: personas are built from a group's
-review history *before* a dated event and scored against the real recommend split
-*after* it, so every result is a held-out prediction rather than a fit.
+For each case we take the people who reviewed a game *before* a dated event (a
+paid game adding microtransactions, a battle pass, an economy change, a
+paid-to-free switch, and so on), turn each of them into a short third-person
+persona from their behavioural history alone, and ask a model whether that player
+would still recommend the game after the change. The prediction is scored blind
+against the real recommend rate that shows up in reviews *after* the event, read
+straight from a historical review dump. Nothing about the outcome touches persona
+construction, so every score is a held-out prediction, not a fit.
 
-## Method ladder
+## Result, honestly
 
-- **M1** — naive prompting (control).
-- **M2a** — replay of real, stratified-sampled users.
-- **M2b** — behavioural cluster archetypes weighted to real proportions.
-- **M3** — the stronger M2 variant placed on a homophily graph, with
-  Friedkin–Johnsen opinion dynamics before answering.
-
-Each method yields an answer distribution for a single-select question; methods
-are compared by Jensen–Shannon divergence against the Steam ground truth.
+Across six cases the grounded persona panels land inside or near the real
+post-event recommend range on most of them, including one event that happened
+after the model's training cutoff (so it cannot have been memorised). The method
+predicts calm when the real reaction is calm and a collapse when it collapses,
+rather than always leaning negative. It is not perfect: the failure modes are
+measured and reported, not hidden. The main one is a level problem, where the
+model orders personas correctly but reads almost all of them below the real rate,
+which we probe with a set of labelled control runs.
 
 ## Layout
 
 ```
 llmsonas/
-  config.py        pinned run settings (model, target app, event cutoff, seed)
-  data/            ingestion (reuses the Senti-Minted Steam clients)
+  config.py        pinned run settings (model, seed, the smoke-test case)
+  cases.py         the scored cases and the run harness that drives them
+  data/            load a game's reviews from the dump; live-pull for the smoke test
   features/        per-user behavioural feature vectors
-  construction/    persona selection (M2a / M2b) + third-person profiles
-  survey/          survey prompts + option-token logprob extraction
-  graph/           M3 homophily graph + Friedkin–Johnsen contagion
-  scoring/         JS divergence, bootstrap CIs, swing error
-scripts/           entry points (smoke test)
+  construction/    persona selection, segmentation, exposure, third-person bios
+  survey/          survey prompt + option-token logprob readout
+  graph/           the M3 homophily graph and Friedkin-Johnsen opinion dynamics
+  scoring/         aggregation, bootstrap CIs, divergence
+scripts/           one entry point per case, plus the control/ablation probes
 tests/
 ```
 
-## Setup
+## Running it
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate          # Windows (use source .venv/bin/activate on *nix)
+.venv\Scripts\activate          # source .venv/bin/activate on macOS/Linux
 pip install -r requirements.txt
 
-copy .env.example .env          # then edit .env and add your Together key
+copy .env.example .env          # then put your Together key in .env
 ```
 
-## First milestone — CS:GO smoke test
-
-Proves the whole ladder connects end-to-end on a minimal slice (~20 personas, one
-question, 3 graph rounds, Llama-3.1-8B). Needs no data download — it pulls a few
-hundred recent CS:GO reviews from the public Steam reviews API.
+The persona calls go to Together (`TOGETHER_API_KEY` in `.env`). You do not need a
+key to check the wiring: set `LLMSONAS_OFFLINE=1` and a deterministic stub stands
+in for the model, so the whole ladder runs end to end without a network call.
 
 ```bash
-python scripts/smoke_test.py
+python -m pytest                              # 22 tests
+set LLMSONAS_OFFLINE=1                         # Windows; use export on *nix
+python scripts/smoke_test_payday2.py          # the Payday 2 flagship case, offline
 ```
 
-The full historical run uses the frozen Steam review dump (wired in later).
+The historical review dump is large and is not included here. The code expects
+the "Steam Reviews 2024" per-app dump as a zip under `Historical Data/` (see
+`llmsonas/data/dump.py` for the exact path and member layout). The offline flag
+only swaps in a stub for the model, so the dump-backed cases still need that zip
+to read their ground truth; without it they raise a clear file-not-found.
+
+Scored runs print a methods-by-question table to stdout and drop their
+transcripts and per-persona CSVs in `out/` (git-ignored).
