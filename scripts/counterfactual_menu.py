@@ -60,6 +60,23 @@ MENUS: dict[str, dict[str, str]] = {
             "containing weapon skins, some of which carry stat bonuses."
         ),
     },
+    "tekken8": {
+        # shipped: shop + paid battle pass (from the case definition)
+        "no_battle_pass": (
+            "The game, which costs full price, has added an in-game shop that "
+            "sells cosmetic items for real money."
+        ),
+        "earnable_currency": (
+            "The game, which costs full price, has added an in-game shop whose "
+            "cosmetic items are bought with currency earned through gameplay."
+        ),
+        "announced_upfront": (
+            "The game, which costs full price, has added an in-game shop that "
+            "sells cosmetic items for real money, followed by a paid battle "
+            "pass, both of which the developer had said before launch it "
+            "planned to add."
+        ),
+    },
 }
 
 

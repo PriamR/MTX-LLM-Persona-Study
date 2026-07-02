@@ -142,6 +142,28 @@ HELLDIVERS2 = DumpCase(
     note="CONTRAST ONLY: dump post-dates Sony's reversal (~58% edited), so the measured swing washes out.",
 )
 
+TEKKEN8 = DumpCase(
+    key="tekken8",
+    title="Tekken 8 — Tekken Shop cash shop (2024-02-28)",
+    appid=1778820,
+    event_cutoff=1709078400,   # 2024-02-28 00:00 UTC (Tekken Shop launch)
+    # Facts only: a real-money cosmetics shop added to a full-price game one
+    # month after launch, with a paid battle pass following. No promise-break
+    # clause — none is documented for Tekken 8 (unlike Payday 2).
+    change=(
+        "The game, which costs full price, has added an in-game shop that "
+        "sells cosmetic items for real money, followed by a paid battle pass."
+    ),
+    note="second in-scope premium-MTX case. SLOW BURN: the backlash built over "
+         "~6 weeks (shop 02-28, battle pass early April), so the window is 45d, "
+         "chosen from the swing shape before any model run. Post-cutoff event "
+         "(training data ends ~2023-12): no memorisation possible. Screened "
+         "2026-07-02: 0.835 -> 0.560 (45d), panel edits 0.261 (n=1153).",
+    # The reaction accumulated instead of spiking; a 7-day window would measure
+    # the pre-backlash lull (-0.08), not the reaction (-0.28 by day 45).
+    gt_window_days=45,
+)
+
 ARK = DumpCase(
     key="ark",
     title="ARK: Survival Evolved — Scorched Earth paid expansion (2016-09-01)",
@@ -175,7 +197,7 @@ CSGO = DumpCase(
          "the enriched personas still collapse the way the anchoring finding predicts.",
 )
 
-CASES = {c.key: c for c in (PAYDAY2, TOTALWAR3, NOMANSSKY, HELLDIVERS2, ARK, CSGO)}
+CASES = {c.key: c for c in (PAYDAY2, TEKKEN8, TOTALWAR3, NOMANSSKY, HELLDIVERS2, ARK, CSGO)}
 
 
 def _offline_backend(messages: list[dict], model: str) -> float:
