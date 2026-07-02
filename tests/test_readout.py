@@ -12,7 +12,7 @@ from llmsonas.cases import PAYDAY2, dump_deltas
 from llmsonas.construction.exposure import Exposure
 from llmsonas.construction.segment import population_bands
 from llmsonas.data.ingest import UserRecord
-from llmsonas.harness import recommend_key
+from llmsonas.harness import recommend_key, survey_permuted, swap_labels
 from llmsonas.survey.prompt import _question_block, frequency_messages, grounded_messages
 from llmsonas.survey.together_client import _option_logprobs, _p_from_dist, logit_gap
 
@@ -94,6 +94,34 @@ def test_dump_deltas_writes_raw_per_persona_values(tmp_path):
     assert df.loc[1, "expo_band"] == "none"       # no footprint -> none
     assert list(df["weight"]) == [1.0, 2.0]
     assert set(df.columns) >= {"rank", "p", "lp_recommend", "lp_other", "investment"}
+
+
+def test_swap_labels_exchanges_meanings_not_keys():
+    labels = {"A": "Recommend", "B": "Not recommend"}
+    swapped = swap_labels(labels)
+    assert swapped == {"A": "Not recommend", "B": "Recommend"}
+    assert recommend_key(swapped) == "B"
+    assert swap_labels(swapped) == labels  # involution
+
+
+def test_survey_permuted_averages_both_label_orders():
+    labels = {"A": "Recommend", "B": "Not recommend"}
+    seen: list[str] = []
+
+    # A backend that reads which layout it was shown: 0.9 under the original
+    # ("A) Recommend" in the prompt), 0.1 under the swap — so a correct
+    # average is 0.5 and any single-arm readout is not.
+    def backend(msgs: list[dict], mdl: str) -> float:
+        text = msgs[-1]["content"]
+        seen.append(text)
+        return 0.9 if "A) Recommend" in text else 0.1
+
+    p_bar, p_orig, p_swap = survey_permuted(
+        ["bio one", "bio two"], "model", "Q?", labels, grounded=True, backend=backend)
+    assert list(p_orig) == [0.9, 0.9] and list(p_swap) == [0.1, 0.1]
+    assert list(p_bar) == [0.5, 0.5]
+    assert len(seen) == 4  # every persona surveyed under both orders
+    assert sum("A) Not recommend" in t for t in seen) == 2
 
 
 def test_grounded_messages_unchanged_for_scored_labels():

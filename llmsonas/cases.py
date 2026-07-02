@@ -47,7 +47,13 @@ from llmsonas.features.build import numeric_features
 from llmsonas.graph.build import build_influence_matrix
 from llmsonas.graph.fj import friedkin_johnsen
 from llmsonas.graph.nullcheck import homophily_nullcheck
-from llmsonas.harness import MethodResult, recommend_key, score, survey
+from llmsonas.harness import (
+    MethodResult,
+    recommend_key,
+    score,
+    survey_permuted,
+    swap_labels,
+)
 
 OUT_DIR = ROOT / "out"
 
@@ -358,6 +364,10 @@ def run_dump_smoke(case: DumpCase) -> None:
     gt_clean = float(clean["voted_up"].mean()) if len(clean) else float("nan")
 
     print(f"{case.title} | model={'OFFLINE-STUB' if offline else MODEL_ID} | n={case.n_personas}")
+    print("  readout: permutation-averaged over answer order — every persona is "
+          "surveyed under both label layouts and p̄ = (p_orig + p_swap)/2 is "
+          "scored (adopted 2026-07-02; E1 measured a median 2.4-nat bias toward "
+          "the later-listed option)")
     if case.note:
         print(f"  case: {case.note}")
     direction = "UP" if gt > pre_ratio else "DOWN"
@@ -398,35 +408,44 @@ def run_dump_smoke(case: DumpCase) -> None:
 
     results: list[MethodResult] = []
 
-    m1 = survey([m1_profile(i) for i in range(case.n_personas)], MODEL_ID, Q, LABELS,
-                grounded=False, backend=backend)
+    m1, _, _ = survey_permuted([m1_profile(i) for i in range(case.n_personas)],
+                               MODEL_ID, Q, LABELS, grounded=False, backend=backend)
     results.append(score("M1", m1, None, gt, seed=case.seed))
 
     a_idx, a_w = stratified_sample(records, case.n_personas, seed=case.seed)
     bios_a = [situation_bio(records[i], case.change, bands, expo.get(records[i].steamid))
               for i in a_idx]
     _print_persona_mix(records, a_idx, bands, bios_a, expo)
-    # Collect the raw option logprobs for M2a so the report can show the logit
-    # gaps a saturated P hides (only the real client can supply them). Which
-    # letter means "recommend" follows the case's answer_labels, so the
-    # label-swap control is a config change, not a fork.
+    # Collect the raw option logprobs for both M2a arms so the report can show
+    # the logit gaps a saturated P hides (only the real client can supply
+    # them). Which letter means "recommend" follows each arm's labels, so the
+    # swap arm is a config change, not a fork.
+    labels_swap = swap_labels(LABELS)
     gaps_a: list[dict] = []
+    gaps_a_swap: list[dict] = []
     opts, rec = tuple(LABELS), recommend_key(LABELS)
+    rec_swap = recommend_key(labels_swap)
     if backend is None:
         from llmsonas.survey.together_client import answer_probability
 
         def m2a_backend(msgs: list[dict], mdl: str) -> float | None:
             return answer_probability(msgs, mdl, options=opts, recommend=rec, detail=gaps_a)
+
+        def m2a_backend_swap(msgs: list[dict], mdl: str) -> float | None:
+            return answer_probability(msgs, mdl, options=opts, recommend=rec_swap,
+                                      detail=gaps_a_swap)
     else:
-        m2a_backend = backend
-    Pa = survey(bios_a, MODEL_ID, Q, LABELS, grounded=True, backend=m2a_backend)
+        m2a_backend = m2a_backend_swap = backend
+    Pa, Pa_orig, Pa_swap = survey_permuted(bios_a, MODEL_ID, Q, LABELS, grounded=True,
+                                           backend=m2a_backend,
+                                           backend_swap=m2a_backend_swap)
     res_a = score("M2a", Pa, a_w, gt, seed=case.seed)
     results.append(res_a)
 
     b_idx, b_w = cluster_archetypes(X, records, case.n_personas, seed=case.seed)
     bios_b = [situation_bio(records[i], case.change, bands, expo.get(records[i].steamid))
               for i in b_idx]
-    Pb = survey(bios_b, MODEL_ID, Q, LABELS, grounded=True, backend=backend)
+    Pb, _, _ = survey_permuted(bios_b, MODEL_ID, Q, LABELS, grounded=True, backend=backend)
     results.append(score("M2b", Pb, b_w, gt, seed=case.seed))
 
     # Hub weight = how far each voice actually carried: helpful votes on the
@@ -468,9 +487,22 @@ def run_dump_smoke(case: DumpCase) -> None:
 
     if gaps_a:
         _print_gap_report(gaps_a, records, a_idx, expo, opts, rec)
-        path = dump_deltas(delta_csv_path(case), gaps_a, Pa, records, a_idx, a_w,
-                           expo, bands, opts, rec)
-        print(f"  per-persona Δ dump -> {path}")
+        path = dump_deltas(delta_csv_path(case, tag="m2a-orig"), gaps_a, Pa_orig,
+                           records, a_idx, a_w, expo, bands, opts, rec)
+        print(f"  per-persona Δ dump (orig arm) -> {path}")
+    if gaps_a_swap:
+        from llmsonas.survey.together_client import logit_gap
+
+        d_o = np.array([logit_gap(lp, opts, rec) for lp in gaps_a], dtype=float)
+        d_s = np.array([logit_gap(lp, opts, rec_swap) for lp in gaps_a_swap], dtype=float)
+        if len(d_o) == len(d_s) and len(d_o):
+            d_bar, beta = (d_o + d_s) / 2.0, (d_o - d_s) / 2.0
+            print(f"  debiased Δ̄ (mean of both orders): median {np.nanmedian(d_bar):+.2f} "
+                  f"[{np.nanmin(d_bar):+.2f}, {np.nanmax(d_bar):+.2f}] | "
+                  f"order bias β median {np.nanmedian(beta):+.2f}")
+        path = dump_deltas(delta_csv_path(case, tag="m2a-swap"), gaps_a_swap, Pa_swap,
+                           records, a_idx, a_w, expo, bands, opts, rec_swap)
+        print(f"  per-persona Δ dump (swap arm) -> {path}")
 
     print("\nhomophily null-shuffle check (M3 graph):")
     print(f"  Moran's I = {null.observed:+.4f} | null mean = {null.null_mean:+.4f} | "

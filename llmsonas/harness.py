@@ -31,6 +31,42 @@ class MethodResult:
     weights: np.ndarray
 
 
+def swap_labels(labels: dict[str, str]) -> dict[str, str]:
+    """The same option keys with their meanings exchanged — the counterpart
+    arm of the permutation-averaged readout."""
+    keys = list(labels)
+    return dict(zip(keys, list(labels.values())[::-1]))
+
+
+def survey_permuted(
+    items: list[str],
+    model: str,
+    question: str,
+    labels: dict[str, str],
+    *,
+    grounded: bool,
+    fallback: float = 0.5,
+    backend: Backend | None = None,
+    backend_swap: Backend | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Permutation-averaged readout: every persona is surveyed under both label
+    orders and p̄ = (p_orig + p_swap) / 2 is the scored probability.
+
+    Adopted as the scored readout 2026-07-02: the E1 controls measured a median
+    2.4-nat bias toward the later-listed option that the fixed A=Recommend
+    layout silently absorbed. Averaging the two orders removes it mechanically,
+    case-blind, without the model ever being told anything new. Returns
+    (p̄, p_orig, p_swap); callers that need per-arm logprob detail pass separate
+    backends, since the recommend letter differs between arms.
+    """
+    P1 = survey(items, model, question, labels,
+                grounded=grounded, fallback=fallback, backend=backend)
+    P2 = survey(items, model, question, swap_labels(labels),
+                grounded=grounded, fallback=fallback,
+                backend=backend_swap if backend_swap is not None else backend)
+    return (P1 + P2) / 2.0, P1, P2
+
+
 def recommend_key(labels: dict[str, str]) -> str:
     """The option key that means "recommend" — the value that is exactly
     "Recommend" (so the A/B label swap needs no extra config), else the first
