@@ -26,6 +26,10 @@ def _hours(minutes: int) -> int:
 
 
 def third_person_bio(r: UserRecord) -> str:
+    """First-pass bio used only by the live-ingest CS:GO smoke tests — NOT the
+    scored path. It embeds the review quote and the prior stance, both of which
+    ``situation_bio`` (the scored bio builder) deliberately withholds so the
+    model has to reason forward from behaviour alone."""
     # Frame the prior review as PAST behaviour on the *paid* game, not a present
     # verdict. Stating "currently recommends it" leaks the pre-event answer and the
     # model just parrots it instead of reasoning about the free-to-play change.

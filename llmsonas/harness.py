@@ -1,9 +1,10 @@
 """Run harness.
 
 One path per method so the deliverable is a single methods x questions table.
-``survey`` turns a list of personas into per-persona P(recommend); ``score``
-aggregates that into p_hat with a bootstrap CI and the JS divergence vs ground
-truth.
+``survey`` turns a list of personas into per-persona P(recommend); the scored
+path always goes through ``survey_permuted`` (both label orders, averaged);
+``score`` aggregates into p_hat with a bootstrap CI and the JS divergence vs
+ground truth.
 """
 from __future__ import annotations
 

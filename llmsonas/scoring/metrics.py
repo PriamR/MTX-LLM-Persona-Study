@@ -1,8 +1,10 @@
-"""Scoring — aggregate the per-persona probabilities into a distribution and
-compare it to the real one.
+"""Scoring — aggregate the per-persona probabilities and compare them to the
+real outcome.
 
-Primary metric is Jensen-Shannon divergence over the binary answer distribution,
-with a bootstrap CI over personas (the Desirability-Bias paper's protocol).
+The scored tables report the weighted mean p_hat with a bootstrap CI over
+personas (the Desirability-Bias paper's protocol), plus the Jensen-Shannon
+divergence of the implied binary answer distribution against the real
+recommend split.
 """
 from __future__ import annotations
 
